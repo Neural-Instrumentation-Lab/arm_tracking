@@ -1,0 +1,10 @@
+clear; clf;
+x = linspace(0,1);
+a = 0.25;
+y = erf(x/a);
+% y = erf(x/.5)*.5;
+m = (y(2) - y(1))/(x(2)-x(1));
+plot(x,y,x,m*x);
+grid on;
+axis([0 max(x) 0 max(x)]);
+axis square;
