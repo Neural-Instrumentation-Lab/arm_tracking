@@ -1,14 +1,29 @@
+'''
+MODEL V00
+
+First implementation of 2D arm movement with cerebellar
+error correction
+
+@Author: Iyad Obeid
+@Date: Fall 2023
+
+'''
+
+## IMPORTS #####################################################################
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum
+from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus
 
+###################################
 def get_trajectory(fname:str):
-    '''
-    load desired end effector trajectory from csv file
+###################################
+    ''' load desired end effector trajectory from csv file
     
-    Params:
+    Parse filename, prepend directory name, load from csv, and parse into columns
+    
+    Args:
         fname:  file name
     Returns:
         traj:   n_samples x n_dims trajectory data
@@ -20,36 +35,50 @@ def get_trajectory(fname:str):
     if fname[-3:] != 'csv':
         fname += '.csv'
 
-    # prepend direcotry name
+    # prepend directory name
     fname = 'trajectories/' + fname
 
-    # load data - time always in column 0
+    # load data - time should always be in column 0
     data = np.loadtxt(fname,delimiter=',')
 
     # parse columns
-    t    = data[:,0]
-    traj = data[:,1:]
+    t     = data[:,0]
+    traj  = data[:,1:]
     n_dim = traj.shape[1]
 
     # exit gracefully
     return traj,t,n_dim
 
+###################################
 def parse_args():
+###################################
     '''
     Parses commandline arguments
+
+    Collects trajectory file name from commandline
 
     Returns:
         fname(string)
     '''
+    # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("trj_file" , help='trajectory file name')
-    args = parser.parse_args()
-    fname = args.trj_file
+    parser.add_argument("traj_file" , help='trajectory file name')
+
+    # parse args and extract filename
+    args  = parser.parse_args()
+    fname = args.traj_file
+
     return fname
 
+###################################
 def plot_results(desired_position , actual_limb_location):
+###################################    
     '''
     plots desired and actual end effector positions
+
+    Args:
+        desired_position:       trajectory that end effector was trying to achieve
+        actual_limb_position:   trajectory that end effector actually acheived
     '''
     
     plt.plot(desired_position[:,0]     , desired_position[:,1])
@@ -58,8 +87,9 @@ def plot_results(desired_position , actual_limb_location):
     plt.ylim([10,15])
     plt.show()
 
-
+###################################
 def main():
+###################################
 
     # load user preferences from command line
     fname = parse_args()
@@ -74,16 +104,16 @@ def main():
     # instantiate limb, motor control unit, brain    
     limb       = simplest_2dof_limb()
     motor_ctrl = simplest_2dof_controller(L1=9.8 , L2=5.2 )
-    brain      = cerebellum()
+    brain      = cerebellum_marr_albus()
 
     # iterate control / learning algorithm over time
     for i,waypoint in enumerate(desired_position):
 
-        joint_angles = motor_ctrl.get_joint_angles(waypoint + correction)
-        limb_location = limb.move(joint_angles)
+        joint_angles   = motor_ctrl.get_joint_angles(waypoint + correction)
+        limb_location  = limb.move(joint_angles)
         movement_error = waypoint - limb_location
 
-        brain.update(movement_error , joint_angles)
+        brain.update(movement_error)
         correction = brain.compute_correction(joint_angles)
 
         # store outcomes
