@@ -1,0 +1,13 @@
+name: arm-tracking
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - tk  # Replaces python3-tk
+  - numpy
+  - matplotlib
+  - scipy
+  - pip
+  - pip:
+    - logging

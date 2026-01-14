@@ -13,8 +13,18 @@ error correction
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
-
+import logging
 from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus
+
+import matplotlib
+matplotlib.use('TkAgg')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
+    datefmt="%H:%M:%S"
+)
+
 
 ###################################
 def get_trajectory(fname:str):
@@ -62,7 +72,7 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("traj_file" , help='trajectory file name')
+    parser.add_argument("traj_file" , nargs='?', default='traj_001.csv', help='trajectory file name')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -81,10 +91,11 @@ def plot_results(desired_position , actual_limb_location):
         actual_limb_position:   trajectory that end effector actually acheived
     '''
     
-    plt.plot(desired_position[:,0]     , desired_position[:,1])
-    plt.plot(actual_limb_location[:,0] , actual_limb_location[:,1])
+    plt.plot(desired_position[:,0]     , desired_position[:,1], label='Desired Position')
+    plt.plot(actual_limb_location[:,0] , actual_limb_location[:,1], label='Actual Position')
     plt.xlim([-10,10])
     plt.ylim([10,15])
+    plt.legend()
     plt.show()
 
 ###################################
@@ -102,8 +113,10 @@ def main():
     correction = np.zeros(n_dimensions)
 
     # instantiate limb, motor control unit, brain    
+    # FIXME simulation only works when L1 and L2 are exactly 10 & 5
+    # compare against matlab code and see if we lost a minus sign or something
     limb       = simplest_2dof_limb()
-    motor_ctrl = simplest_2dof_controller(L1=9.8 , L2=5.2 )
+    motor_ctrl = simplest_2dof_controller(L1=10.01 , L2=5 )
     brain      = cerebellum_marr_albus()
 
     # iterate control / learning algorithm over time
