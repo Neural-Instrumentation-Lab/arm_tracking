@@ -10,21 +10,21 @@ Its not clear this is the best code I have from that time but its what I was abl
 
 ## Installation Instructions
 
-* Prerequisite: `conda` or `anaconda`
+### Prerequisites: 
+1. Local installation of `Docker Desktop`
+1. WSL (if running on Windows)
+1. VSCode
+1. In VSCode, install the `Dev Containers` extension
+1. In VSCode, install the `WSL` extension (if on Windows)
 
-1. Use conda to create an environment from the `environment.yml` file
-```bash
-conda env create -f environment.yml
-```
-
-2. Load the environment with
-```bash
-conda activate arm-tracking
-```
-
-3. Run the code:
-```bash
-python model_v00.py
-```
-
-Note that `requirements.txt` is deprecated in favor of `environment.yml`. As stated, use `conda` not `venv`/`pip` to create the environment. 
+### Actions
+1. Run Docker
+1. Run WSL, and clone this repositiory
+1. In VSCode, open folder for the repository
+1. A pop-up should appear asking to re-open this folder in a
+Dev Container - click `Reopen in Container`
+1. Open a Python file then look at the Python interpreter 
+specified on the bottom right of your window. Click on it 
+and select `/usr/local/bin/python`
+1. Click the run button to run the code. You can also use debug 
+features.

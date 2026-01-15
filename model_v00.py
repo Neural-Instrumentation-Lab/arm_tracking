@@ -10,13 +10,13 @@ error correction
 '''
 
 ## IMPORTS #####################################################################
-import numpy as np
-import matplotlib.pyplot as plt
 import argparse
 import logging
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib
 from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus
 
-import matplotlib
 matplotlib.use('TkAgg')
 
 logging.basicConfig(
