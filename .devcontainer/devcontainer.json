@@ -15,7 +15,8 @@
                 "ms-python.pylint"
             ],
             "settings": {
-                "python.defaultInterpreterPath": "/usr/local/bin/python"
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.analysis.extraPaths": ["/usr/local/lib/python3.10/site-packages"]
             }
         }
     },
