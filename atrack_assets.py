@@ -128,6 +128,7 @@ class cerebellum_marr_albus:
     '''
     Marr-Albus cerebellum
     Still needs to be written
+    * is this true? Ethan needs to check.
     '''
 
     ###################################
