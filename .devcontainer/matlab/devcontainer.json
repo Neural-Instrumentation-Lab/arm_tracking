@@ -1,0 +1,21 @@
+{
+    "name": "arm-tracking-matlab",
+    "image": "mathworks/matlab:r2026a",
+    "workspaceFolder": "/home/matlab/Documents/MATLAB",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/matlab/Documents/MATLAB,type=bind,consistency=cached",
+
+    "runArgs": [
+        "--shm-size=512M",
+        "--network=host"
+    ],
+
+    "portsAttributes": {
+        "8888": {
+            "label": "MATLAB Browser",
+            "onAutoForward": "openBrowser"
+        }
+    },
+    "forwardPorts": [8888],
+
+    "postStartCommand": "matlab -browser"
+}
