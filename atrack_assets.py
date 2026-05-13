@@ -139,7 +139,7 @@ class cerebellum_marr_albus:
         self.rbfs = []
         self.wts  = []
         d_theta   = 20
-        sigma     = 2.5 * d_theta
+        sigma     = d_theta
         self.beta = 0.0005 # learning rate
 
         for ctr in combine( range(0,360,d_theta) , range(0,360,d_theta) ):
