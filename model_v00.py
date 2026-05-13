@@ -49,7 +49,7 @@ def get_trajectory(fname:str):
     fname = 'trajectories/' + fname
 
     # load data - time should always be in column 0
-    data = np.loadtxt(fname,delimiter=',')
+    data = np.loadtxt(fname,delimiter=',',ndmin=2)
 
     # parse columns
     t     = data[:,0]
@@ -116,7 +116,7 @@ def main():
     # FIXME simulation only works when L1 and L2 are exactly 10 & 5
     # compare against matlab code and see if we lost a minus sign or something
     limb       = simplest_2dof_limb()
-    motor_ctrl = simplest_2dof_controller(L1=10.01 , L2=5 )
+    motor_ctrl = simplest_2dof_controller(L1=10.05 , L2=5)
     brain      = cerebellum_marr_albus()
 
     # iterate control / learning algorithm over time

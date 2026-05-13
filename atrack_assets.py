@@ -136,17 +136,18 @@ class cerebellum_marr_albus:
         self.n_dims = 2
 
         # set up an array of RBFs over the angle space
-        self.rbfs = []
-        self.wts  = []
-        d_theta   = 20
-        sigma     = d_theta
-        self.beta = 0.0005 # learning rate
+        self.rbfs          = []
+        self.wts           = []
+        d_theta            = 20
+        self.beta          = 0.0005 # learning rate
+        self.n_cerebellums = ((359 // d_theta) + 1)**2 # need n_cerebellums b4 loop, but don't want to loop 
+        biggest_d_btw_ctrs = np.linalg.norm(np.array([180, 180])) 
+        sigma              = biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
 
         for ctr in combine( range(0,360,d_theta) , range(0,360,d_theta) ):
             self.rbfs.append( rbf(ctr,sigma) )
             self.wts.append([0,0])
 
-        self.n_cerebellums = len(self.rbfs)
         self.activations = [0 for _ in range(self.n_cerebellums)]
 
     ###################################
