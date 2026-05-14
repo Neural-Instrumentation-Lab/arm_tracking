@@ -138,15 +138,14 @@ class cerebellum_marr_albus:
         # set up an array of RBFs over the angle space
         self.rbfs          = []
         self.wts           = []
-        d_theta            = 20
         self.beta          = 0.0005 # learning rate
-        self.n_cerebellums = ((359 // d_theta) + 1)**2 # need n_cerebellums b4 loop, but don't want to loop 
-        biggest_d_btw_ctrs = np.linalg.norm(np.array([180, 180])) 
-        sigma              = biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
+        d_x = 1
+        sigma              = 2.5*d_x # biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
 
-        for ctr in combine( range(0,360,d_theta) , range(0,360,d_theta) ):
+        for ctr in combine( np.arange(-15,15,d_x) , np.arange(-15,15,d_x) ):
             self.rbfs.append( rbf(ctr,sigma) )
             self.wts.append([0,0])
+        self.n_cerebellums = len(self.rbfs) 
 
         self.activations = [0 for _ in range(self.n_cerebellums)]
 
@@ -158,13 +157,13 @@ class cerebellum_marr_albus:
             self.wts[j][1] -= self.beta * movement_error[1]*self.activations[j]
 
     ###################################
-    def compute_correction(self,joint_angles):
+    def compute_correction(self,movement_error):
     ###################################
 
         corr_0 , corr_1 = 0,0
         i = 0
         for w,rbf in zip(self.wts,self.rbfs):
-            activation = rbf.compute(joint_angles)
+            activation = rbf.compute(movement_error)
             corr_0 += w[0]*activation
             corr_1 += w[1]*activation
             self.activations[i] = activation

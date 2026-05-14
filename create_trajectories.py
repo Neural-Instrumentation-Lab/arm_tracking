@@ -97,6 +97,22 @@ def create_traj_001():
     fname = 'trajectories/traj_001.csv'
     save_data(fname,array)
 
+###################################
+def create_traj_002():
+###################################
+    ''' Trajectory 02 - a sinusoid 
+        from (-8,12) to (8,12) at spacing 0.01
+    '''
+    f = 1
+    fs = 1000
+    t = np.arange(0, 10, 1/fs)
+    x = np.cos(2*np.pi*f*t)
+    y = [12 for _ in range(len(x))]
+    array = build_array(t,x,y)
+    fname = 'trajectories/traj_002.csv'
+    save_data(fname,array)
+
+
 ## MAIN ###################################################################
 
 ###################################
@@ -133,6 +149,7 @@ def main():
     # create the specified trajectory
     if   args.trajectory_id == '0': create_traj_000()
     elif args.trajectory_id == '1': create_traj_001()
+    elif args.trajectory_id == '2': create_traj_002()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")
