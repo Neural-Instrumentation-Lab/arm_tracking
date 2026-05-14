@@ -1,0 +1,20 @@
+x-matlab-base: &matlab-base
+  image: mathworks/matlab:r2026a
+  stdin_open: true
+  tty: true
+  shm_size: 512m
+  volumes:
+    - .:/home/matlab/Documents/MATLAB
+
+services:
+  matlab-cli:
+    <<: *matlab-base
+    profiles: [cli]
+    network_mode: host
+
+  matlab-browser:
+    <<: *matlab-base
+    profiles: [browser]
+    ports:
+      - "8888:8888"
+    command: ["-browser"]
