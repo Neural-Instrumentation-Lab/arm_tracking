@@ -135,16 +135,20 @@ def main():
 
     # testing arm with dynamics
     coolarm    = dynamic_3dof_arm("models/arm_3dof.urdf") 
+    # this should be ran once for every trajectory because it takes a long time
+    # and will be the same every time
     j, v, a = makeAngleData(coolarm, desired_position, t)
 
+    # inverse kinematics - need to introduce error somewhere here
     #for i, (joint, vel, accel) in enumerate(zip(j, v, a)):
     #    torques[i, :] = coolarm.inverse(joint, vel, accel)
     #print(torques)
 
+    # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = MeshcatVisualizer(coolarm.model, coolarm.collModel, coolarm.visualModel)
     viz.initViewer(open=False)
     viz.loadViewerModel()
-    
+    # loop the sim forever
     while True:
         viz.play(j, 1/60)
 
