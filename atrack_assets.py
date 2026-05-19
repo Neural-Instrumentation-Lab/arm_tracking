@@ -10,7 +10,8 @@ A group of classes for use in cerebellar arm-tracking experiments
 import numpy as np
 from numpy import sin, cos, arccos, exp
 from itertools import product as combine
-
+import pinocchio as pin
+from scipy.optimize import fmin_bfgs
 ## create a Joint Angle Error ##################################################
 class JointAngleError(Exception): pass
 
@@ -102,6 +103,83 @@ class simplest_2dof_limb:
         # return x-y locations
         return np.array([x,y])
 
+class dynamic_3dof_arm:
+    '''
+    3dof arm with pinocchio; rigid body sim library
+    data from arm from Garrdio 2013 (3 joint)
+    Functions mostly taken from pinocchio docs: 
+    '''
+    def __init__(self, filename):
+        # initializes from urdf file
+        # https://gepetto.github.io/doc/pinocchio/doxygen-html/md_doc_b-examples_a-model.html
+        self.model, self.collModel, self.visualModel = pin.buildModelsFromUrdf(filename)
+
+        self.data = self.model.createData()
+        self.eeDes = np.array([0, 0, 0]) # make this prettier
+        self.eeId = self.model.getFrameId("ee_fixed_joint")
+        
+        # print neutral config
+        q = pin.neutral(self.model)
+        print(f"q: {q.T}")
+        # Perform the forward kinematics over the kinematic tree
+        pin.forwardKinematics(self.model, self.data, q)
+        pin.updateFramePlacements(self.model, self.data)
+        # Print out the placement of each joint of the kinematic tree
+        for name, oMi in zip(self.model.names, self.data.oMi):
+            print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
+        
+    def forward(self, position, velocity, torque):
+        # forward dynamics
+        accel = pin.aba(self.model, self.data, position, velocity, torque)
+        return accel
+
+    def move(self, pos, vel, accel):
+        # updates model data
+        pin.forwardKinematics(self.model, self.data, pos, vel, accel)
+        pin.updateFramePlacements(self.model, self.data)
+
+    def inverse(self, position, velocity, accel):
+        # inverse dynammics
+        torque = pin.rnea(self.model, self.data, position, velocity, accel)
+        return torque
+
+    def getPos(self):
+        # returns the position of the end effector
+        return self.data.oMf[self.eeId].translation
+    
+    def eeError(self, joint):
+        # returns the difference between the desired EE pos
+        # and the EE pos in a joint config given by input arg
+        pin.forwardKinematics(self.model, self.data, joint)
+        pin.updateFramePlacements(self.model, self.data)
+        eePos = self.data.oMf[self.eeId].translation
+        return np.linalg.norm(eePos - self.eeDes) 
+
+    def getRandomConf(self):
+        # returns a random joint config
+        return pin.randomConfiguration(self.model)
+
+    def getEEFromJoint(self, pos):
+        # returns the end effector position [x, y, z]
+        # from a joint config vector
+        pin.forwardKinematics(self.model, self.data, pos)
+        pin.updateFramePlacements(self.model, self.data)
+        return self.getPos()
+
+    def getJointPosFromEE(self, pos, prevPos = np.array([])):
+        if prevPos.size == 0:
+            prevPos = pin.neutral(self.model)
+        # returns a possible joint config from a EE position
+        self.eeDes = pos.copy()
+        # initial guess at the previous position
+        # I think this minimizes the difference in angles from pos to pos
+        # but that needs more testing (there are redundant configs for any given EE pos)
+        qDes, fopt, _, _, _, _, _ = fmin_bfgs(self.eeError, prevPos, full_output=True, disp=False)
+        if np.linalg.norm(fopt) > 0.001:
+            raise JointAngleError("Point not reachable by arm")
+        return qDes
+
+
 ## Radial Basis Function *######################################################
 class rbf:
     '''
@@ -116,6 +194,7 @@ class rbf:
         self.c , self.sigma = c,sigma
     
     ###################################
+    # slow, should implement in c++
     def compute(self,x):
         term0 = (x[0]-self.c[0])**2
         term1 = (x[1]-self.c[1])**2
@@ -150,6 +229,7 @@ class cerebellum_marr_albus:
         self.activations = [0 for _ in range(self.n_cerebellums)]
 
     ###################################
+    # slow
     def update(self,movement_error):
     ###################################
         for j in range(self.n_cerebellums):
@@ -157,6 +237,7 @@ class cerebellum_marr_albus:
             self.wts[j][1] -= self.beta * movement_error[1]*self.activations[j]
 
     ###################################
+    # slow
     def compute_correction(self,movement_error):
     ###################################
 

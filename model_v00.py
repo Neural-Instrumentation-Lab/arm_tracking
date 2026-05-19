@@ -15,7 +15,8 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus
+from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm
+from pinocchio.visualize import MeshcatVisualizer
 
 matplotlib.use('TkAgg')
 
@@ -72,7 +73,7 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("traj_file" , nargs='?', default='traj_001.csv', help='trajectory file name')
+    parser.add_argument("traj_file" , nargs='?', default='traj_003.csv', help='trajectory file name')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -98,6 +99,21 @@ def plot_results(desired_position , actual_limb_location):
     plt.legend()
     plt.show()
 
+def makeAngleData(arm, trajectory, t):
+    joints = np.zeros((len(trajectory), 3))
+    velocity = np.zeros_like(joints)
+    acceleration = np.zeros_like(joints)
+    prevCord = np.array([0, 0, 0])
+    for i, coord in enumerate(trajectory):
+        j = arm.getJointPosFromEE(coord, prevCord)
+        joints[i, :] = j
+        if i > 0:
+            dt = (t[i] - t[i-1])
+            velocity[i, :] = (coord - prevCord) / dt
+            acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
+        prevCord = coord
+    return joints, velocity, acceleration
+
 ###################################
 def main():
 ###################################
@@ -113,34 +129,50 @@ def main():
     correction = np.zeros(n_dimensions)
 
     # instantiate limb, motor control unit, brain    
-    # FIXME simulation only works when L1 and L2 are exactly 10 & 5
-    # compare against matlab code and see if we lost a minus sign or something
     limb       = simplest_2dof_limb()
-    motor_ctrl = simplest_2dof_controller(L1=10.05 , L2=5)
+    motor_ctrl = simplest_2dof_controller(L1=10.05 , L2=5.05)
     brain      = cerebellum_marr_albus()
 
+    # testing arm with dynamics
+    coolarm    = dynamic_3dof_arm("models/arm_3dof.urdf") 
+    j, v, a = makeAngleData(coolarm, desired_position, t)
+
+    #for i, (joint, vel, accel) in enumerate(zip(j, v, a)):
+    #    torques[i, :] = coolarm.inverse(joint, vel, accel)
+    #print(torques)
+
+    viz = MeshcatVisualizer(coolarm.model, coolarm.collModel, coolarm.visualModel)
+    viz.initViewer(open=False)
+    viz.loadViewerModel()
+    
+    while True:
+        viz.play(j, 1/60)
+
     # iterate control / learning algorithm over time
-    for i,waypoint in enumerate(desired_position):
+    # for i,waypoint in enumerate(desired_position):
 
-        joint_angles   = motor_ctrl.get_joint_angles(waypoint) + correction
-        limb_location  = limb.move(joint_angles)
-        movement_error = waypoint - limb_location
+    #     joint_angles   = motor_ctrl.get_joint_angles(waypoint) + correction
+    #     limb_location  = limb.move(joint_angles)
+    #     movement_error = waypoint - limb_location
 
-        brain.update(movement_error)
-        correction = brain.compute_correction(limb_location)
+    #     brain.update(movement_error)
+    #     correction = brain.compute_correction(limb_location)
 
-        # store outcomes
-        actual_limb_location[i,:] = limb_location
+    #     # store outcomes
+    #     actual_limb_location[i,:] = limb_location
 
-    # plot outcomes
-    #plot_results(desired_position , actual_limb_location)
-    fig, ax = plt.subplots(1, 2)
-    ax[0].plot(t, desired_position[:, 0])
-    ax[0].plot(t, actual_limb_location[:, 0])
-    ax[0].set_title("x position")
-    ax[1].plot(t, desired_position[:, 1])
-    ax[1].plot(t, actual_limb_location[:, 1])
-    ax[1].set_title("y position")
-    plt.show()
+    # # plot outcomes
+    # #plot_results(desired_position , actual_limb_location)
+    # fig, ax = plt.subplots(1, 2)
+    # ax[0].plot(t, desired_position[:, 0])
+    # ax[0].plot(t, actual_limb_location[:, 0])
+    # ax[0].set_title("x position")
+    # ax[1].plot(t, desired_position[:, 1])
+    # ax[1].plot(t, actual_limb_location[:, 1])
+    # ax[1].set_title("y position")
+    # plt.show()
+
+    # to keep visualizer running
+    # there are better ways to do this
 
 main()

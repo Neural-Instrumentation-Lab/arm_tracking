@@ -32,13 +32,16 @@ def linspace(a,b,dx):
     return x
 
 ###################################
-def build_array(t,x,y):
+def build_array(t,x,y, z=np.array([])):
 ###################################
     '''build_array(t,x,y)
         Builds a 2D array of three columns, suitable for saving into a csv file
     Args:
     Returns:'''
-    return np.array([t,x,y]).T
+    if z.size == 0:
+        return np.array([t,x,y]).T
+    else:
+        return np.array([t,x,y,z]).T
 
 ###################################
 def save_data(fname,array):
@@ -112,6 +115,20 @@ def create_traj_002():
     fname = 'trajectories/traj_002.csv'
     save_data(fname,array)
 
+###################################
+def create_traj_003():
+###################################
+    ''' Trajectory 03- a line for the 3dof arm 
+    '''
+    f = 1
+    fs = 60 
+    t = np.arange(0, 10, 1/fs)
+    x = np.linspace(0, 0.2, len(t)) 
+    y = np.linspace(0, 0.2, len(t)) 
+    z = np.linspace(1.1, 0.3, len(t)) 
+    array = build_array(t,x,y, z)
+    fname = 'trajectories/traj_003.csv'
+    save_data(fname,array)
 
 ## MAIN ###################################################################
 
@@ -150,6 +167,7 @@ def main():
     if   args.trajectory_id == '0': create_traj_000()
     elif args.trajectory_id == '1': create_traj_001()
     elif args.trajectory_id == '2': create_traj_002()
+    elif args.trajectory_id == '3': create_traj_003()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")

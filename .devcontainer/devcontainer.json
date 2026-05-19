@@ -32,5 +32,11 @@
     },
     "runArgs": [
         "--network=host"
-    ]
+    ],
+    "forwardPorts": [7000, 6000],
+    "portsAttributes": {
+    "7000": {
+        "protocol": "http"
+    }
+    }
 }
