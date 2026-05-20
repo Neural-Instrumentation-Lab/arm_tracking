@@ -99,8 +99,21 @@ def plot_results(desired_position , actual_limb_location):
     plt.legend()
     plt.show()
 
-def makeAngleData(arm, trajectory, t):
-    joints = np.zeros((len(trajectory), 3))
+def makeJointData(arm, trajectory, t):
+    '''
+    constructs joint positions, velocities, and accelerations
+    for a given trajectory of the end-effector.
+
+    Args:
+        arm: arm class.
+        trajectory: positions (x,y,z) in 3d space of the end effector.
+        t: time vector corresponding to the trajectory.
+    Returns:
+        joints: joint positions 
+        velocity: joint angular velocities
+        acceleration: joint angular accelerations 
+    '''
+    joints = np.zeros((len(trajectory), arm.njoints))
     velocity = np.zeros_like(joints)
     acceleration = np.zeros_like(joints)
     prevCord = np.array([0, 0, 0])
@@ -109,7 +122,7 @@ def makeAngleData(arm, trajectory, t):
         joints[i, :] = j
         if i > 0:
             dt = (t[i] - t[i-1])
-            velocity[i, :] = (coord - prevCord) / dt
+            velocity[i, :] = (j - joints[i-1,:]) / dt
             acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
         prevCord = coord
     return joints, velocity, acceleration
@@ -136,13 +149,13 @@ def main():
     # testing arm with dynamics
     coolarm    = dynamic_3dof_arm("models/arm_3dof.urdf") 
     # this should be ran once for every trajectory because it takes a long time
-    # and will be the same every time
-    j, v, a = makeAngleData(coolarm, desired_position, t)
+    # and will be the same every time for a given arm + traj pair
+    j, v, a = makeJointData(coolarm, desired_position, t)
 
     # inverse kinematics - need to introduce error somewhere here
-    #for i, (joint, vel, accel) in enumerate(zip(j, v, a)):
-    #    torques[i, :] = coolarm.inverse(joint, vel, accel)
-    #print(torques)
+    torques = np.zeros_like(j)
+    for i, (joint, vel, accel) in enumerate(zip(j, v, a)):
+        torques[i, :] = coolarm.inverse(joint, vel, accel)
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = MeshcatVisualizer(coolarm.model, coolarm.collModel, coolarm.visualModel)

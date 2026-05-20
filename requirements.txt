@@ -3,4 +3,3 @@ matplotlib
 scipy
 pin
 meshcat
-imageio-ffmpeg

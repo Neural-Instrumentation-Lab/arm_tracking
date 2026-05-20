@@ -106,48 +106,99 @@ class simplest_2dof_limb:
 class dynamic_3dof_arm:
     '''
     3dof arm with pinocchio; rigid body sim library
-    data from arm from Garrdio 2013 (3 joint)
+    data from arm from Garrdio 2013 (3 dof)
     Functions mostly taken from pinocchio docs: 
     '''
-    def __init__(self, filename):
+    def __init__(self, filename, disp=True):
+        '''
+        creates arm from file.
+        this arm is constructed from the tables in the Garrido 2013 paper. (Appendix B)
+
+        Args:
+            filename: urdf filepath describing the arm config.
+            disp (optional): if true prints out the neutral configuration of the arm
+        '''
         # initializes from urdf file
         # https://gepetto.github.io/doc/pinocchio/doxygen-html/md_doc_b-examples_a-model.html
         self.model, self.collModel, self.visualModel = pin.buildModelsFromUrdf(filename)
-
         self.data = self.model.createData()
-        self.eeDes = np.array([0, 0, 0]) # make this prettier
+        self.njoints = self.model.njoints - 1 # end effector counts a joint
+        
+        # end effector data
+        self.eeDes = np.array([0, 0, 0]) 
         self.eeId = self.model.getFrameId("ee_fixed_joint")
         
-        # print neutral config
-        q = pin.neutral(self.model)
-        print(f"q: {q.T}")
-        # Perform the forward kinematics over the kinematic tree
-        pin.forwardKinematics(self.model, self.data, q)
-        pin.updateFramePlacements(self.model, self.data)
-        # Print out the placement of each joint of the kinematic tree
-        for name, oMi in zip(self.model.names, self.data.oMi):
-            print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
+        # Motor inertias, urdf files don't support these natively for some reason
+        self.model.armature = np.array([415.5*10**-6, 415.5*10**-6, 361.6*10**-6]) 
+        
+        if disp:
+            # print neutral config
+            q = pin.neutral(self.model)
+            print(f"q: {q.T}")
+            # Perform the forward kinematics over the kinematic tree
+            pin.forwardKinematics(self.model, self.data, q)
+            pin.updateFramePlacements(self.model, self.data)
+            # Print out the placement of each joint of the kinematic tree
+            for name, oMi in zip(self.model.names, self.data.oMi):
+                print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
         
     def forward(self, position, velocity, torque):
-        # forward dynamics
+        '''
+        computes joint acceleration 
+
+        Args:
+            position: joint positions
+            velocity: joint velocities
+            torque: torque vector to apply to the joints
+        
+        Returns:
+            accel: joint accelerations
+        '''
         accel = pin.aba(self.model, self.data, position, velocity, torque)
         return accel
 
     def move(self, pos, vel, accel):
-        # updates model data
+        '''
+        updates the model joints and frames.
+        
+        Args:
+            pos: joint positions
+            vel: joint velocities
+            accel: joint accelerations
+        '''
         pin.forwardKinematics(self.model, self.data, pos, vel, accel)
         pin.updateFramePlacements(self.model, self.data)
 
     def inverse(self, position, velocity, accel):
-        # inverse dynammics
+        '''
+        computes the torque of a motion
+        
+        Args:
+            position: joint positions
+            velocity: joint velocities
+            acceleration: joint accelerations
+        
+        Returns:
+            torque: joint torques
+        '''
         torque = pin.rnea(self.model, self.data, position, velocity, accel)
         return torque
 
     def getPos(self):
-        # returns the position of the end effector
+        '''
+        Returns:
+            end-effector position in 3d space. (x, y, z)
+        '''
         return self.data.oMf[self.eeId].translation
     
     def eeError(self, joint):
+        '''
+        Args:
+            joint: joint configuration 
+
+        Returns:
+            distance between EE pos in input config and desired EE pos
+        '''
         # returns the difference between the desired EE pos
         # and the EE pos in a joint config given by input arg
         pin.forwardKinematics(self.model, self.data, joint)
@@ -156,7 +207,9 @@ class dynamic_3dof_arm:
         return np.linalg.norm(eePos - self.eeDes) 
 
     def getRandomConf(self):
-        # returns a random joint config
+        '''
+        retrieve random joint config
+        '''
         return pin.randomConfiguration(self.model)
 
     def getEEFromJoint(self, pos):
@@ -167,17 +220,45 @@ class dynamic_3dof_arm:
         return self.getPos()
 
     def getJointPosFromEE(self, pos, prevPos = np.array([])):
+        '''
+        Args:
+            pos: joint position
+            prevPos (optional): previous joint position. Defaults to model neutral.
+
+        Returns:
+            a possible joint configuration, minimzing movement between pos and prevPos
+        '''
+        # this takes forever and doesn't even work that well
+        # look into CLIK to see if that algo is faster
+        # https://gepetto.github.io/doc/pinocchio/doxygen-html/md_doc_b-examples_d-inverse-kinematics.html 
+        
         if prevPos.size == 0:
             prevPos = pin.neutral(self.model)
-        # returns a possible joint config from a EE position
         self.eeDes = pos.copy()
-        # initial guess at the previous position
-        # I think this minimizes the difference in angles from pos to pos
-        # but that needs more testing (there are redundant configs for any given EE pos)
-        qDes, fopt, _, _, _, _, _ = fmin_bfgs(self.eeError, prevPos, full_output=True, disp=False)
-        if np.linalg.norm(fopt) > 0.001:
+
+        # these samples were chosen randomly and without care, should be better
+        # the idea is: find a possible spot from a number of samples
+        # then find the configuration that is the closest to the previous
+        # if you see the sim "jump" in the trajectory
+        # there should be another sample near to where the sim jumped
+        sample_spots = np.array([[0, 0, 0],
+                                [2.18, -1.38, 1.67],
+                                [-2.97, 1.76, -.05],
+                                [0, -2.33, -1.71],
+                                [1.1, -4.01, -1.59],
+                                [-1.63, -3, 0.68],
+                                [-.19, -.19, 0.8],
+                                [.78, 0, 0]])
+        possibConfigs= []
+        for sample in sample_spots:
+            qDes, fopt, _, _, _, _, _ = fmin_bfgs(self.eeError, sample, full_output=True, disp=False)
+            if fopt < 0.01:
+                possibConfigs.append(qDes)
+        # if no config within a cm of the desired, position is unreachable.
+        if not possibConfigs:
             raise JointAngleError("Point not reachable by arm")
-        return qDes
+        dists = list(map(lambda x: np.linalg.norm(x - prevPos), possibConfigs))
+        return possibConfigs[dists.index(min(dists))]
 
 
 ## Radial Basis Function *######################################################

@@ -123,8 +123,8 @@ def create_traj_003():
     f = 1
     fs = 60 
     t = np.arange(0, 10, 1/fs)
-    x = np.linspace(0, 0.2, len(t)) 
-    y = np.linspace(0, 0.2, len(t)) 
+    x = np.linspace(0, 0.5, len(t)) 
+    y = np.linspace(0, -0.2, len(t)) 
     z = np.linspace(1.1, 0.3, len(t)) 
     array = build_array(t,x,y, z)
     fname = 'trajectories/traj_003.csv'
