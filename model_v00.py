@@ -15,7 +15,8 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm
+from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm
+import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 
 matplotlib.use('TkAgg')
@@ -73,7 +74,7 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("traj_file" , nargs='?', default='traj_003.csv', help='trajectory file name')
+    parser.add_argument("traj_file" , nargs='?', default='traj_004.csv', help='trajectory file name')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -118,7 +119,7 @@ def makeJointData(arm, trajectory, t):
     acceleration = np.zeros_like(joints)
     prevCord = np.array([0, 0, 0])
     for i, coord in enumerate(trajectory):
-        j = arm.getJointPosFromEE(coord, prevCord)
+        j = arm.getJointPosFromEE(coord)
         joints[i, :] = j
         if i > 0:
             dt = (t[i] - t[i-1])
@@ -137,59 +138,62 @@ def main():
     # load end effector trajectory
     desired_position, t, n_dimensions = get_trajectory(fname)   
 
-    # init variables
-    actual_limb_location = np.zeros_like(desired_position)
-    correction = np.zeros(n_dimensions)
-
     # instantiate limb, motor control unit, brain    
-    limb       = simplest_2dof_limb()
-    motor_ctrl = simplest_2dof_controller(L1=10.05 , L2=5.05)
-    brain      = cerebellum_marr_albus()
+    coolarm     = dynamic_2dof_arm("models/arm_2dof.urdf") 
+    illusoryArm = dynamic_2dof_arm("models/arm_2dofIllusoryLengths.urdf", lengths=[.315, .41, .395]) 
+    brain       = cerebellum_marr_albus()
 
-    # testing arm with dynamics
-    coolarm    = dynamic_3dof_arm("models/arm_3dof.urdf") 
-    # this should be ran once for every trajectory because it takes a long time
-    # and will be the same every time for a given arm + traj pair
-    j, v, a = makeJointData(coolarm, desired_position, t)
+    # IK computing the necessary torques along a trajectory
+    # PD controller because otherwise it will diverge
+    # Computed for an arm with different lengths to introduce error
+    positions, velocities, accels = makeJointData(illusoryArm, desired_position, t)
+    torques   = np.zeros_like(positions)
+    torquesPD = np.zeros_like(torques)
+    kp        = np.array([100, 50]) # found empirically, these seem ok
+    kd        = 2*np.sqrt(kp) # this is the best the ratio for a reason
+    pos       = np.zeros(2)  
+    vel       = np.zeros_like(pos)
+    acc       = np.zeros_like(pos)
+    for i, (posCorr, velCorr, accCorr) in enumerate(zip(positions, velocities, accels)):
+        torques[i, :]   = illusoryArm.inverse(posCorr, velCorr, accCorr) # ideal torque
+        torquesPD[i, :] = torques[i, :] + kp*(posCorr - pos) + kd*(velCorr - vel)
+        acc             = illusoryArm.forward(pos, vel, torquesPD[i, :])
+        if i > 0:
+            dt  = t[i] - t[i-1]
+            vel = vel + acc * dt 
+            pos = pin.integrate(illusoryArm.model, pos, vel*dt)
 
-    # inverse kinematics - need to introduce error somewhere here
-    torques = np.zeros_like(j)
-    for i, (joint, vel, accel) in enumerate(zip(j, v, a)):
-        torques[i, :] = coolarm.inverse(joint, vel, accel)
+    # FK applying those computed torques to the actual arm
+    # with control loop from the cerebellum
+    correction = np.zeros(2)
+    pos        = np.zeros(2)  
+    vel        = np.zeros_like(pos)
+    acc        = np.zeros_like(pos)
+    actualPos  = np.zeros_like(positions)
+    for i, torque in enumerate(torquesPD):
+        corrTorque = torque + correction
+        acc = coolarm.forward(pos, vel, corrTorque)
+        # move the arm
+        if i > 0:
+            dt = t[i] - t[i-1]
+            vel = vel + acc * dt 
+            pos = pin.integrate(coolarm.model, pos, vel*dt)
+        coolarm.move(pos, vel, acc)
+
+        # calculate error & correction
+        eePos = coolarm.getPos()
+        error = desired_position[i] - eePos 
+
+        brain.update([error[0], error[2]])
+        correction = brain.compute_correction([eePos[0], eePos[2]])
+
+        actualPos[i,:] = pos
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = MeshcatVisualizer(coolarm.model, coolarm.collModel, coolarm.visualModel)
     viz.initViewer(open=False)
     viz.loadViewerModel()
-    # loop the sim forever
     while True:
-        viz.play(j, 1/60)
-
-    # iterate control / learning algorithm over time
-    # for i,waypoint in enumerate(desired_position):
-
-    #     joint_angles   = motor_ctrl.get_joint_angles(waypoint) + correction
-    #     limb_location  = limb.move(joint_angles)
-    #     movement_error = waypoint - limb_location
-
-    #     brain.update(movement_error)
-    #     correction = brain.compute_correction(limb_location)
-
-    #     # store outcomes
-    #     actual_limb_location[i,:] = limb_location
-
-    # # plot outcomes
-    # #plot_results(desired_position , actual_limb_location)
-    # fig, ax = plt.subplots(1, 2)
-    # ax[0].plot(t, desired_position[:, 0])
-    # ax[0].plot(t, actual_limb_location[:, 0])
-    # ax[0].set_title("x position")
-    # ax[1].plot(t, desired_position[:, 1])
-    # ax[1].plot(t, actual_limb_location[:, 1])
-    # ax[1].set_title("y position")
-    # plt.show()
-
-    # to keep visualizer running
-    # there are better ways to do this
+        viz.play(actualPos, 1/10000)
 
 main()

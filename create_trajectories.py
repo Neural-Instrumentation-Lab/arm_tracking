@@ -54,7 +54,7 @@ def save_data(fname,array):
     Returns:
         none
     '''
-    np.savetxt(fname , array , delimiter=',' , fmt="%0.3f")
+    np.savetxt(fname , array , delimiter=',' , fmt="%0.5f")
 
 ###################################
 def get_trajectory_list():
@@ -130,6 +130,22 @@ def create_traj_003():
     fname = 'trajectories/traj_003.csv'
     save_data(fname,array)
 
+###################################
+def create_traj_004():
+###################################
+    ''' Trajectory 04 - a sinusoid 
+        for dynamic 2dof arm (static link .31 high)
+    '''
+    f = 1
+    fs = 10000
+    t = np.arange(0, 3, 1/fs)
+    x = 0.4*np.cos(2*np.pi*f*t)
+    y = [0 for _ in x] # this arm has no dof in the y-axis
+    z = np.array([0.6 for _ in range(len(x))])
+    array = build_array(t,x,y,z)
+    fname = 'trajectories/traj_004.csv'
+    save_data(fname,array)
+
 ## MAIN ###################################################################
 
 ###################################
@@ -168,6 +184,7 @@ def main():
     elif args.trajectory_id == '1': create_traj_001()
     elif args.trajectory_id == '2': create_traj_002()
     elif args.trajectory_id == '3': create_traj_003()
+    elif args.trajectory_id == '4': create_traj_004()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")

@@ -123,13 +123,14 @@ class dynamic_3dof_arm:
         self.model, self.collModel, self.visualModel = pin.buildModelsFromUrdf(filename)
         self.data = self.model.createData()
         self.njoints = self.model.njoints - 1 # end effector counts a joint
+        self.lengths = [.31, .4, .39]
         
         # end effector data
         self.eeDes = np.array([0, 0, 0]) 
         self.eeId = self.model.getFrameId("ee_fixed_joint")
         
         # Motor inertias, urdf files don't support these natively for some reason
-        self.model.armature = np.array([415.5*10**-6, 415.5*10**-6, 361.6*10**-6]) 
+        self.model.armature = np.array([361.6*10**-6, 415.5*10**-6, 415.5*10**-6]) 
         
         if disp:
             # print neutral config
@@ -141,7 +142,7 @@ class dynamic_3dof_arm:
             # Print out the placement of each joint of the kinematic tree
             for name, oMi in zip(self.model.names, self.data.oMi):
                 print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
-        
+
     def forward(self, position, velocity, torque):
         '''
         computes joint acceleration 
@@ -219,6 +220,19 @@ class dynamic_3dof_arm:
         pin.updateFramePlacements(self.model, self.data)
         return self.getPos()
 
+    def getJointPosFromEE_not_iterative(self, pos):
+        # doesn't work yet because of base height and other things
+        # https://www.atlantis-press.com/article/126003627.pdf
+        x, y, z = pos
+        r = np.sqrt(x**2 + y**2 + z**2)
+        L1, L2, L3 = self.lengths
+        joint1 = np.atan(y / x)
+        print((x**2 + y**2 + z**2 - (L1**2 * L2**2)) / (2*L1*L2))
+        joint3 = -np.acos( (x**2 + y**2 + z**2 - (L1**2 * L2**2)) / (2*L1*L2) )
+        joint2 = np.asin(z / r) + np.atan( (L2 * sin(joint3)) / (L1 + L2*np.cos(joint3)) )
+        return np.array([joint1, joint2, joint3])
+
+
     def getJointPosFromEE(self, pos, prevPos = np.array([])):
         '''
         Args:
@@ -227,9 +241,11 @@ class dynamic_3dof_arm:
 
         Returns:
             a possible joint configuration, minimzing movement between pos and prevPos
+        
+        LOOK INTO DOING THIS NON-ITERATIVELY FOR A 3DOF ARM BECAUSE THATS POSSIBLE
+        AND SAVES A BUNCH OF TIME (METHOD ABOVE)
+        
         '''
-        # this takes forever and doesn't even work that well
-        # look into CLIK to see if that algo is faster
         # https://gepetto.github.io/doc/pinocchio/doxygen-html/md_doc_b-examples_d-inverse-kinematics.html 
         
         if prevPos.size == 0:
@@ -260,6 +276,65 @@ class dynamic_3dof_arm:
         dists = list(map(lambda x: np.linalg.norm(x - prevPos), possibConfigs))
         return possibConfigs[dists.index(min(dists))]
 
+class dynamic_2dof_arm(dynamic_3dof_arm):
+    def is_valid_location(self, pos):
+        x,z   = pos[0] , pos[2]
+        L1,L2,L3 = self.lengths 
+
+        # return true if pos can be physically reached
+        return np.abs(L2-L3) < np.sqrt(x**2 + (z-L1)**2) < (L2+L3)
+
+
+    def getJointPosFromEE(self, pos, prevPos = np.array([])):
+        x,z   = pos[0] , pos[2]
+        L1,L2,L3 = self.lengths
+
+        # if <pos> cannot be physically reached by the arm, raise a Joint Angle Error and exit
+        if not self.is_valid_location(pos):
+            raise JointAngleError("Trying to reach to an unreachable location")
+
+        #  Compute the values for th1 and th2
+        th2 = arccos( ( (x**2+(z-L1)**2) - (L2**2+L3**2) ) / (2*L2*L3) )
+        # have to use different derivation because quadrant info
+        # is weird when converting to the arm angles
+        th1 = np.atan2(z-L1, x) - np.atan2(L3*sin(th2), L2 + L3*cos(th2)) 
+
+        # joints's zero are on the y-axis not x-axis
+        return np.array([(np.pi/2) - th1, -th2])
+
+    def __init__(self, filename, lengths=[.31, .4, .39], disp=True):
+        '''
+        creates arm from file.
+        this arm is constructed from the tables in the Garrido 2013 paper. (Appendix B)
+
+        Args:
+            filename: urdf filepath describing the arm config.
+            disp (optional): if true prints out the neutral configuration of the arm
+        '''
+        # initializes from urdf file
+        # https://gepetto.github.io/doc/pinocchio/doxygen-html/md_doc_b-examples_a-model.html
+        self.model, self.collModel, self.visualModel = pin.buildModelsFromUrdf(filename)
+        self.data = self.model.createData()
+        self.njoints = self.model.njoints - 1 # end effector counts a joint
+        self.lengths = lengths 
+        
+        # end effector data
+        self.eeDes = np.array([0, 0, 0]) 
+        self.eeId = self.model.getFrameId("ee_fixed_joint")
+        
+        # Motor inertias, urdf files don't support these natively for some reason
+        self.model.armature = np.array([415.5*10**-6, 415.5*10**-6]) 
+        
+        if disp:
+            # print neutral config
+            q = pin.neutral(self.model)
+            print(f"q: {q.T}")
+            # Perform the forward kinematics over the kinematic tree
+            pin.forwardKinematics(self.model, self.data, q)
+            pin.updateFramePlacements(self.model, self.data)
+            # Print out the placement of each joint of the kinematic tree
+            for name, oMi in zip(self.model.names, self.data.oMi):
+                print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
 
 ## Radial Basis Function *######################################################
 class rbf:
