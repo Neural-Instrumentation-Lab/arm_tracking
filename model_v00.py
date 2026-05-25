@@ -100,6 +100,13 @@ def plot_results(desired_position , actual_limb_location):
     plt.legend()
     plt.show()
 
+def angle_diff(a, b):
+    """
+    Smallest signed difference between angles a and b.
+    Result is in [-pi, pi].
+    """
+    return (a - b + np.pi) % (2 * np.pi) - np.pi
+
 def makeJointData(arm, trajectory, t):
     '''
     constructs joint positions, velocities, and accelerations
@@ -123,7 +130,7 @@ def makeJointData(arm, trajectory, t):
         joints[i, :] = j
         if i > 0:
             dt = (t[i] - t[i-1])
-            velocity[i, :] = (j - joints[i-1,:]) / dt
+            velocity[i, :] = angle_diff(j, joints[i-1,:]) / dt
             acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
         prevCord = coord
     return joints, velocity, acceleration
@@ -149,9 +156,9 @@ def main():
     positions, velocities, accels = makeJointData(illusoryArm, desired_position, t)
     torques   = np.zeros_like(positions)
     torquesPD = np.zeros_like(torques)
-    kp        = np.array([100, 50]) # found empirically, these seem ok
+    kp        = np.array([200, 200]) # found empirically, these seem ok
     kd        = 2*np.sqrt(kp) # this is the best the ratio for a reason
-    pos       = np.zeros(2)  
+    pos       = positions[0]  
     vel       = np.zeros_like(pos)
     acc       = np.zeros_like(pos)
     for i, (posCorr, velCorr, accCorr) in enumerate(zip(positions, velocities, accels)):
@@ -166,10 +173,11 @@ def main():
     # FK applying those computed torques to the actual arm
     # with control loop from the cerebellum
     correction = np.zeros(2)
-    pos        = np.zeros(2)  
+    pos        = coolarm.getJointPosFromEE(desired_position[0]) 
     vel        = np.zeros_like(pos)
     acc        = np.zeros_like(pos)
     actualPos  = np.zeros_like(positions)
+    errorTotal = 0
     for i, torque in enumerate(torquesPD):
         corrTorque = torque + correction
         acc = coolarm.forward(pos, vel, corrTorque)
@@ -183,12 +191,12 @@ def main():
         # calculate error & correction
         eePos = coolarm.getPos()
         error = desired_position[i] - eePos 
+        errorTotal = errorTotal + error
 
         brain.update([error[0], error[2]])
         correction = brain.compute_correction([eePos[0], eePos[2]])
 
         actualPos[i,:] = pos
-
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = MeshcatVisualizer(coolarm.model, coolarm.collModel, coolarm.visualModel)
     viz.initViewer(open=False)
