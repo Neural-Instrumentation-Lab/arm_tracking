@@ -147,7 +147,10 @@ def main():
 
     # instantiate limb, motor control unit, brain    
     coolarm     = dynamic_2dof_arm("models/arm_2dof.urdf") 
-    illusoryArm = dynamic_2dof_arm("models/arm_2dofIllusoryLengths.urdf", lengths=[.315, .41, .395]) 
+    illusoryArm = dynamic_2dof_arm("models/arm_2dofIllusoryLengths.urdf", lengths=[.31, .401, .391]) 
+    # turn gravity off
+    #coolarm.model.gravity = pin.Motion.Zero()
+    #illusoryArm.model.gravity = pin.Motion.Zero()
     brain       = cerebellum_marr_albus()
 
     # IK computing the necessary torques along a trajectory
@@ -177,7 +180,6 @@ def main():
     vel        = np.zeros_like(pos)
     acc        = np.zeros_like(pos)
     actualPos  = np.zeros_like(positions)
-    errorTotal = 0
     for i, torque in enumerate(torquesPD):
         corrTorque = torque + correction
         acc = coolarm.forward(pos, vel, corrTorque)
@@ -191,7 +193,6 @@ def main():
         # calculate error & correction
         eePos = coolarm.getPos()
         error = desired_position[i] - eePos 
-        errorTotal = errorTotal + error
 
         brain.update([error[0], error[2]])
         correction = brain.compute_correction([eePos[0], eePos[2]])

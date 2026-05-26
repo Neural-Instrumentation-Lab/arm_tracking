@@ -15,7 +15,7 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus
+from exp_01_atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus
 
 matplotlib.use('TkAgg')
 
