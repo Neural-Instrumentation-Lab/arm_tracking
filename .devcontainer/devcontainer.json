@@ -42,5 +42,6 @@
     },
     "runArgs": [
         "--network=host"
-    ]
+    ],
+    "forwardPorts": [5500]
 }
