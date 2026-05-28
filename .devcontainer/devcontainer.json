@@ -12,12 +12,21 @@
         "vscode": {
             "extensions": [
                 "ms-python.python",
-                "ms-python.pylint",
-                "ms-toolsai.jupyter"
+                "charliermarsh.ruff",
+                "ms-toolsai.jupyter",
+                "ritwickdey.liveserver"
             ],
             "settings": {
                 "python.defaultInterpreterPath": "/usr/local/bin/python",
-                "python.analysis.extraPaths": ["/usr/local/lib/python3.10/site-packages"]
+                "python.analysis.extraPaths": ["/usr/local/lib/python3.10/site-packages"],
+                "python.linting.enabled": false,
+                "ruff.enable": true,
+                "ruff.lint.enable": true,
+                "ruff.fixAll": false,
+                "ruff.organizeImports": false,
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                }
             }
         }
     },

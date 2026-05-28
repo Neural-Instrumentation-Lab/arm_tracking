@@ -19,7 +19,8 @@ WORKDIR /workspace
 
 # Copy and install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
+    pip install --no-cache-dir ruff
 
 # Set matplotlib backend to TkAgg for interactive plots
 ENV MPLBACKEND=TkAgg
