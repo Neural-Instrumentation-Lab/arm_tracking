@@ -10,8 +10,6 @@ A group of classes for use in cerebellar arm-tracking experiments
 import numpy as np
 from numpy import sin, cos, arccos, exp
 from itertools import product as combine
-import pinocchio as pin
-from scipy.optimize import fmin_bfgs
 ## create a Joint Angle Error ##################################################
 class JointAngleError(Exception): pass
 
@@ -140,14 +138,20 @@ class cerebellum_marr_albus:
         # set up an array of RBFs over the angle space
         self.rbfs          = []
         self.wts           = []
-        self.beta          = 0.0005 # learning rate
-        d_x = 1
-        sigma              = 2.5*d_x # biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
+        self.spacing = 0.25 * np.pi
+        self.beta          = 0.05 # learning rate
+        d_x = np.pi * 0.25
+        sigma              = np.sqrt(2)*d_x # biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
 
-        for ctr in combine( np.arange(-15,15,d_x) , np.arange(-15,15,d_x) ):
-            self.rbfs.append( rbf(ctr,sigma) )
-            self.wts.append([0,0])
-        self.n_cerebellums = len(self.rbfs) 
+        c1_vals = np.arange(start=-0.25 * np.pi, stop=1.25 * np.pi, step=self.spacing)
+        c2_vals = np.arange(start=0, stop=np.pi, step=self.spacing)
+
+        self.n_cols = len(c1_vals)
+        self.n_rows = len(c2_vals)
+        self.n_cerebellums = self.n_rows * self.n_cols
+
+        self.rbfs = [rbf([c1, c2], sigma) for c2 in c2_vals for c1 in c1_vals]
+        self.wts = [[0,0] for _ in self.rbfs]
 
         self.activations = [0 for _ in range(self.n_cerebellums)]
 
@@ -161,13 +165,13 @@ class cerebellum_marr_albus:
 
     ###################################
     # slow
-    def compute_correction(self,movement_error):
+    def compute_correction(self,joint_angles):
     ###################################
 
         corr_0 , corr_1 = 0,0
         i = 0
         for w,rbf in zip(self.wts,self.rbfs):
-            activation = rbf.compute(movement_error)
+            activation = rbf.compute(joint_angles)
             corr_0 += w[0]*activation
             corr_1 += w[1]*activation
             self.activations[i] = activation

@@ -192,10 +192,10 @@ def main():
 
         # calculate error & correction
         eePos = coolarm.getPos()
-        error = desired_position[i] - eePos 
+        error = eePos - desired_position[i] 
 
+        correction = brain.compute_correction(pos)
         brain.update([error[0], error[2]])
-        correction = brain.compute_correction([eePos[0], eePos[2]])
 
         actualPos[i,:] = pos
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000

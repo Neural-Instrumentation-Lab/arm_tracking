@@ -370,13 +370,14 @@ class cerebellum_marr_albus:
     ###################################
         self.n_dims = 2
 
+        # set up an array of RBFs over the angle space
         self.rbfs          = []
         self.wts           = []
-        self.beta          = 0.0005 # learning rate
-        d_x = 1/10
-        sigma              = 2.5*d_x # biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
+        self.beta          = 0.05 # learning rate
+        d_x = np.pi * 0.25
+        sigma              = np.sqrt(2)*d_x # biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
 
-        for ctr in combine( np.arange(-1.5,1.5,d_x) , np.arange(-1.5,1.5,d_x) ):
+        for ctr in combine( np.arange(-np.pi,np.pi,d_x) , np.arange(-np.pi,np.pi,d_x) ):
             self.rbfs.append( rbf(ctr,sigma) )
             self.wts.append([0,0])
         self.n_cerebellums = len(self.rbfs) 
@@ -393,13 +394,13 @@ class cerebellum_marr_albus:
 
     ###################################
     # slow
-    def compute_correction(self,movement_error):
+    def compute_correction(self,joint_pos):
     ###################################
 
         corr_0 , corr_1 = 0,0
         i = 0
         for w,rbf in zip(self.wts,self.rbfs):
-            activation = rbf.compute(movement_error)
+            activation = rbf.compute(joint_pos)
             corr_0 += w[0]*activation
             corr_1 += w[1]*activation
             self.activations[i] = activation

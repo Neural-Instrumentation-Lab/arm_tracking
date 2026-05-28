@@ -120,12 +120,12 @@ def main():
     # iterate control / learning algorithm over time
     for i,waypoint in enumerate(desired_position):
 
-        joint_angles   = motor_ctrl.get_joint_angles(waypoint) + correction
+        joint_angles   = motor_ctrl.get_joint_angles(waypoint + correction) # correction is the wrong sign for some reason
         limb_location  = limb.move(joint_angles)
-        movement_error = waypoint - limb_location
+        movement_error = limb_location - waypoint
 
+        correction = brain.compute_correction(joint_angles)
         brain.update(movement_error)
-        correction = brain.compute_correction(limb_location)
 
         # store outcomes
         actual_limb_location[i,:] = limb_location
