@@ -276,6 +276,38 @@ class dynamic_3dof_arm:
         dists = list(map(lambda x: np.linalg.norm(x - prevPos), possibConfigs))
         return possibConfigs[dists.index(min(dists))]
 
+    def inverseDynamics(self, positions, velocities, accels, time):
+        '''
+        creates the ideal torques along a given trajectory
+        filtered through a PD controller to reduce numerical error
+        through multiple integrations
+
+        Args:
+            positions: joint positions 
+            velocities: joint velocities
+            accels: joint accelerations
+            time: time vector
+        
+        Returns:
+            torques
+        '''
+        torques   = np.zeros_like(positions)
+        torquesPD = np.zeros_like(torques)
+        kp        = np.ones(self.njoints) * 20 # found empirically, these seem ok
+        kd        = 2*np.sqrt(kp) # this is the best the ratio for a reason
+        pos       = positions[0]  
+        vel       = np.zeros_like(pos)
+        acc       = np.zeros_like(pos)
+        for i, (posCorr, velCorr, accCorr) in enumerate(zip(positions, velocities, accels)):
+            torques[i, :]   = self.inverse(posCorr, velCorr, accCorr) # ideal torque
+            torquesPD[i, :] = torques[i, :] + kp*(posCorr - pos) + kd*(velCorr - vel)
+            acc             = self.forward(pos, vel, torquesPD[i, :])
+            if i > 0:
+                dt  = time[i] - time[i-1]
+                vel = vel + acc * dt 
+                pos = pin.integrate(self.model, pos, vel*dt)
+        return torquesPD
+
 class dynamic_2dof_arm(dynamic_3dof_arm):
     def is_valid_location(self, pos):
         x,z   = pos[0] , pos[2]
@@ -352,9 +384,8 @@ class rbf:
     ###################################
     # slow, should implement in c++
     def compute(self,x):
-        term0 = (x[0]-self.c[0])**2
-        term1 = (x[1]-self.c[1])**2
-        term2 = -(term0 + term1)/(2*self.sigma**2)
+        term1 = np.linalg.norm(x - self.c)
+        term2 = -(term1**2)/(2*self.sigma**2)
         activation = exp(term2)
         return activation
 
@@ -372,38 +403,34 @@ class cerebellum_marr_albus:
 
         # set up an array of RBFs over the angle space
         self.rbfs          = []
+        self.rbfsVel       = []
         self.wts           = []
-        self.beta          = 0.05 # learning rate
-        d_x = np.pi * 0.25
-        sigma              = np.sqrt(2)*d_x # biggest_d_btw_ctrs / np.sqrt(2 * self.n_cerebellums) # spread parameter
+        self.wtsVel        = []
+        self.beta          = 0.0005 # learning rate
+        d_x                = 1 * 0.25
+        d_v                = 5 * 0.25
+        sigma              = np.sqrt(2)*np.sqrt(d_x**2 + d_v**2) # spread parameter
 
-        for ctr in combine( np.arange(-np.pi,np.pi,d_x) , np.arange(-np.pi,np.pi,d_x) ):
+        for ctr in combine( np.arange(-1,1,d_x), np.arange(-1,1,d_x), np.arange(-5, 5, d_v), np.arange(-5, 5, d_v)):
             self.rbfs.append( rbf(ctr,sigma) )
             self.wts.append([0,0])
         self.n_cerebellums = len(self.rbfs) 
+        self.wts = np.array(self.wts)
 
-        self.activations = [0 for _ in range(self.n_cerebellums)]
-
-    ###################################
-    # slow
-    def update(self,movement_error):
-    ###################################
-        for j in range(self.n_cerebellums):
-            self.wts[j][0] -= self.beta * movement_error[0]*self.activations[j]
-            self.wts[j][1] -= self.beta * movement_error[1]*self.activations[j]
+        self.activations = np.array([0 for _ in range(self.n_cerebellums)]).reshape(-1, 1)
 
     ###################################
     # slow
-    def compute_correction(self,joint_pos):
+    def update(self,movement_error,velocity_error):
     ###################################
+        self.wts = self.wts - self.beta * (movement_error + velocity_error) * self.activations
 
-        corr_0 , corr_1 = 0,0
-        i = 0
-        for w,rbf in zip(self.wts,self.rbfs):
-            activation = rbf.compute(joint_pos)
-            corr_0 += w[0]*activation
-            corr_1 += w[1]*activation
-            self.activations[i] = activation
-            i += 1
 
-        return [corr_0,corr_1]
+    ###################################
+    # slow
+    def compute_correction(self,pos,vel):
+    ###################################
+        self.activations = np.array([rbf.compute(np.concatenate((pos,vel))) for rbf in self.rbfs]).reshape(-1, 1)
+        corr = np.sum(self.activations * self.wts, axis=0)
+
+        return corr 

@@ -137,7 +137,7 @@ def create_traj_004():
         for dynamic 2dof arm (static link .31 high)
     '''
     f = 1
-    fs = 10000
+    fs = 500
     t = np.arange(0, 3, 1/fs)
     x = 0.4*np.cos(2*np.pi*f*t)
     y = [0 for _ in x] # this arm has no dof in the y-axis

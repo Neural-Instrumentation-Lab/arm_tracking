@@ -120,7 +120,7 @@ def main():
     # iterate control / learning algorithm over time
     for i,waypoint in enumerate(desired_position):
 
-        joint_angles   = motor_ctrl.get_joint_angles(waypoint + correction) # correction is the wrong sign for some reason
+        joint_angles   = motor_ctrl.get_joint_angles(waypoint + correction)
         limb_location  = limb.move(joint_angles)
         movement_error = limb_location - waypoint
 
