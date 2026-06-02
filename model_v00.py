@@ -168,7 +168,7 @@ def main():
 
     # instantiate limb, motor control unit, brain    
     arm         = dynamic_2dof_arm("models/arm_2dof.urdf") 
-    illusoryArm = dynamic_2dof_arm("models/arm_2dofIllusoryLengths.urdf", lengths=[.31, .401, .391]) 
+    illusoryArm = dynamic_2dof_arm("models/arm_2dofBigIllusion.urdf", lengths=[.31, .5, .49]) 
     brain       = cerebellum_marr_albus()
 
     # turn gravity off
@@ -179,7 +179,7 @@ def main():
     # PD controller because otherwise it will diverge
     # Computed for an arm with different lengths to introduce error
     traj_w_error      = makeJointData(illusoryArm, desired_ee_pos, time)
-    traj_w_error.torq = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
+    traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
 
     # FK applying those computed torques to the actual arm
     # with control loop from the cerebellum
@@ -192,7 +192,12 @@ def main():
                             vel = np.zeros_like(traj_w_error.vel),
                             accel=np.zeros_like(traj_w_error.acel))
     desired_ee_traj = makeEEData(desired_ee_pos, time)
+    eeVel = np.zeros_like(desired_ee_pos[0])
     corrTorque = np.zeros_like(currPos)
+    torrPd = np.zeros_like(currPos)
+
+    traj_no_error      = makeJointData(arm, desired_ee_pos, time)
+    traj_no_error.torq, traj_no_error.eePos = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
 
     for i, torque in enumerate(traj_w_error.torq):
         # move the arm
@@ -200,15 +205,28 @@ def main():
             dt      = time[i] - time[i-1]
             currVel = (currVel + currAcc *dt)
             currPos = pin.integrate(arm.model, currPos, currVel * dt)
-        currAcc = arm.forward(currPos, currVel, torque + corrTorque)
+        currAcc = arm.forward(currPos, currVel, torque + torrPd + corrTorque)
         arm.move(currPos, currVel, currAcc)
 
         final_traj.torq[i] = torque + corrTorque
 
         # calculate error & correction
+        pin.computeJointJacobians(arm.model, arm.data, currPos)
+        J = pin.getFrameJacobian(arm.model, arm.data, arm.eeId, pin.LOCAL_WORLD_ALIGNED)
 
         corrTorque = brain.compute_correction(currPos, currVel)
-        brain.update(currPos - traj_w_error.pos[i], currVel - traj_w_error.vel[i])
+        # PD controller .... again ?
+        kp = np.array([10, 10])
+        kd = 2*np.sqrt(kp)
+        torrPd = kp*(traj_w_error.pos[i] - currPos) + kd*(traj_w_error.vel[i] - currVel)
+
+        # compute error 
+        eeVel = (J[:3,:]).dot(currVel)
+        eePosErr = arm.getPos() - desired_ee_traj.pos[i]
+        eeVelErr = eeVel - desired_ee_traj.vel[i]
+
+        #brain.update(np.array([eePosErr[0], eePosErr[2]]), np.array([eeVelErr[0], eeVelErr[2]]))
+        brain.update(currPos - traj_no_error.pos[i], currVel - traj_no_error.vel[i])
 
         # store results
         final_traj.pos[i,:]   = currPos
@@ -217,12 +235,12 @@ def main():
         final_traj.eePos[i,:] = arm.getPos()
 
     # plot error torques
-    traj_no_error      = makeJointData(arm, desired_ee_pos, time)
-    traj_no_error.torq = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
     errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  traj_w_error.torq)]
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]
+    errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)]
+    errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  traj_w_error.eePos)]
 
-    fig, axs = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
     axs[0].plot(time, traj_no_error.torq[:,0], linewidth=2)
     axs[0].plot(time, traj_w_error.torq[:,0], linewidth=2)
     axs[0].plot(time, final_traj.torq[:,0], linewidth=2)
@@ -242,12 +260,17 @@ def main():
     axs[2].plot(time, errTorqNoBrain, linewidth=2)
     axs[2].plot(time, errTorqBrain, linewidth=2)
     axs[2].set_title("Torque Error")
-    axs[2].set_xlabel("Time")
     axs[2].set_ylabel("||τ_des - τ_actual||")
     axs[2].legend(["No Brain Error", "Brain Error"])
     axs[2].grid(True)
-    axs[2].set_yscale('log')
 
+    axs[3].plot(time, errDistNoBrain, linewidth=2)
+    axs[3].plot(time, errDistBrain, linewidth=2)
+    axs[3].set_title("Distance Error")
+    axs[3].set_xlabel("Time")
+    axs[3].set_ylabel("ee distance error")
+    axs[3].legend(["No Brain Error", "Brain Error"])
+    axs[3].grid(True)
     plt.show()
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000

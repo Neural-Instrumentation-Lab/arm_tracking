@@ -138,7 +138,7 @@ def create_traj_004():
     '''
     f = 1
     fs = 500
-    t = np.arange(0, 3, 1/fs)
+    t = np.arange(0, 10, 1/fs)
     x = 0.4*np.cos(2*np.pi*f*t)
     y = [0 for _ in x] # this arm has no dof in the y-axis
     z = np.array([0.6 for _ in range(len(x))])

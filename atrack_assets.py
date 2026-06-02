@@ -293,6 +293,7 @@ class dynamic_3dof_arm:
         '''
         torques   = np.zeros_like(positions)
         torquesPD = np.zeros_like(torques)
+        eePos     = np.zeros((len(positions), 3))
         kp        = np.ones(self.njoints) * 20 # found empirically, these seem ok
         kd        = 2*np.sqrt(kp) # this is the best the ratio for a reason
         pos       = positions[0]  
@@ -306,7 +307,9 @@ class dynamic_3dof_arm:
                 dt  = time[i] - time[i-1]
                 vel = vel + acc * dt 
                 pos = pin.integrate(self.model, pos, vel*dt)
-        return torquesPD
+            self.move(pos, vel, acc)
+            eePos[i,:] = self.getPos()
+        return torquesPD, eePos
 
 class dynamic_2dof_arm(dynamic_3dof_arm):
     def is_valid_location(self, pos):
@@ -407,11 +410,11 @@ class cerebellum_marr_albus:
         self.wts           = []
         self.wtsVel        = []
         self.beta          = 0.0005 # learning rate
-        d_x                = 1 * 0.25
-        d_v                = 5 * 0.25
+        d_x                = np.pi * 0.25
+        d_v                = 15 * 0.25
         sigma              = np.sqrt(2)*np.sqrt(d_x**2 + d_v**2) # spread parameter
 
-        for ctr in combine( np.arange(-1,1,d_x), np.arange(-1,1,d_x), np.arange(-5, 5, d_v), np.arange(-5, 5, d_v)):
+        for ctr in combine( np.arange(-np.pi,np.pi,d_x), np.arange(-np.pi,np.pi,d_x), np.arange(-15, 15, d_v), np.arange(-15, 15, d_v)):
             self.rbfs.append( rbf(ctr,sigma) )
             self.wts.append([0,0])
         self.n_cerebellums = len(self.rbfs) 
@@ -423,7 +426,9 @@ class cerebellum_marr_albus:
     # slow
     def update(self,movement_error,velocity_error):
     ###################################
-        self.wts = self.wts - self.beta * (movement_error + velocity_error) * self.activations
+        lamb = np.array([1,1]) # constant for combining the errors together ?? 
+        self.wts = self.wts - self.beta * (lamb*movement_error + velocity_error) * self.activations
+
 
 
     ###################################
