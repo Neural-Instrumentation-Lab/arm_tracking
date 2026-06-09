@@ -15,7 +15,7 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm
+from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 
@@ -26,15 +26,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
     datefmt="%H:%M:%S"
 )
-
-class armTraj:
-    def __init__(self, pos=[], vel=[], accel=[], torq=[], time=[], eePos = []):
-        self.pos   = pos
-        self.vel   = vel
-        self.acel  = accel
-        self.torq  = torq
-        self.time  = time
-        self.eePos = eePos
 
 ###################################
 def get_trajectory(fname:str):
@@ -91,21 +82,53 @@ def parse_args():
     return fname
 
 ###################################
-def plot_results(desired_position , actual_limb_location):
+def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain):
 ###################################    
     '''
     plots desired and actual end effector positions
 
     Args:
-        desired_position:       trajectory that end effector was trying to achieve
-        actual_limb_position:   trajectory that end effector actually acheived
+        traj_no_error:          trajectory that end effector was trying to achieve
+        traj_w_error:           trajectory that end effector would have achieved without brain 
+        final_traj:             trajectory that end effector actually reached
+        time:                   time vector
+        errTorqNoBrain:         torque errors without brain
+        errTorqBrain:           torque errors with brain
+        errDistNoBrain:         distance errors without brain
+        errDistBrain:           distance errors with brain
     '''
     
-    plt.plot(desired_position[:,0]     , desired_position[:,1], label='Desired Position')
-    plt.plot(actual_limb_location[:,0] , actual_limb_location[:,1], label='Actual Position')
-    plt.xlim([-10,10])
-    plt.ylim([10,15])
-    plt.legend()
+    fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
+    axs[0].plot(time, traj_no_error.torq[:,0], linewidth=2)
+    axs[0].plot(time, traj_w_error.torq[:,0], linewidth=2)
+    axs[0].plot(time, final_traj.torq[:,0], linewidth=2)
+    axs[0].set_title("Joint 1 Torque")
+    axs[0].set_ylabel("Torque")
+    axs[0].legend(["Ideal", "No Brain", "Brain"])
+    axs[0].grid(True)
+
+    axs[1].plot(time, traj_no_error.torq[:, 1], linewidth=2)
+    axs[1].plot(time, traj_w_error.torq[:, 1], linewidth=2)
+    axs[1].plot(time, final_traj.torq[:, 1], linewidth=2)
+    axs[1].set_title("Joint 2 Torque")
+    axs[1].set_ylabel("Torque")
+    axs[1].legend(["Ideal", "No Brain", "Brain"])
+    axs[1].grid(True)
+
+    axs[2].plot(time, errTorqNoBrain, linewidth=2)
+    axs[2].plot(time, errTorqBrain, linewidth=2)
+    axs[2].set_title("Torque Error")
+    axs[2].set_ylabel("||τ_des - τ_actual||")
+    axs[2].legend(["No Brain Error", "Brain Error"])
+    axs[2].grid(True)
+
+    axs[3].plot(time, errDistNoBrain, linewidth=2)
+    axs[3].plot(time, errDistBrain, linewidth=2)
+    axs[3].set_title("Distance Error")
+    axs[3].set_xlabel("Time")
+    axs[3].set_ylabel("ee distance error")
+    axs[3].legend(["No Brain Error", "Brain Error"])
+    axs[3].grid(True)
     plt.show()
 
 def angle_diff(a, b):
@@ -143,7 +166,23 @@ def makeJointData(arm, trajectory, t):
     armData = armTraj(joints, velocity, acceleration)
     return armData 
 
+def playTraj(arm, traj, timestep):
+    '''
+    creates a video playing through meshcat in your browser
+
+    Args:
+        arm: which arm following to use
+        traj: trajectory to follow. Only needs to have the traj.pos to be filled
+        timestep: how long each position frame lasts in the viewer
+    '''
+    viz = MeshcatVisualizer(arm.model, arm.collModel, arm.visualModel)
+    viz.initViewer(open=False)
+    viz.loadViewerModel()
+    while True:
+        viz.play(traj.pos, timestep)
+
 def makeEEData(pos, t):
+
     velocity = np.zeros_like(pos)
     acceleration = np.zeros_like(pos)
     for i, coord in enumerate(pos):
@@ -168,7 +207,7 @@ def main():
 
     # instantiate limb, motor control unit, brain    
     arm         = dynamic_2dof_arm("models/arm_2dof.urdf") 
-    illusoryArm = dynamic_2dof_arm("models/arm_2dofBigIllusion.urdf", lengths=[.31, .5, .49]) 
+    illusoryArm = dynamic_2dof_arm("models/arm_2dofIllusoryLengths.urdf", lengths=[.31, .5, .49]) 
     brain       = cerebellum_marr_albus()
 
     # turn gravity off
@@ -181,7 +220,7 @@ def main():
     traj_w_error      = makeJointData(illusoryArm, desired_ee_pos, time)
     traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
 
-    # FK applying those computed torques to the actual arm
+    # FD applying those computed torques to the actual arm
     # with control loop from the cerebellum
     currPos       = arm.getJointPosFromEE(desired_ee_pos[0]) 
     currVel       = np.zeros_like(currPos)
@@ -196,37 +235,33 @@ def main():
     corrTorque = np.zeros_like(currPos)
     torrPd = np.zeros_like(currPos)
 
-    traj_no_error      = makeJointData(arm, desired_ee_pos, time)
-    traj_no_error.torq, traj_no_error.eePos = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
-
     for i, torque in enumerate(traj_w_error.torq):
         # move the arm
         if i > 0:
             dt      = time[i] - time[i-1]
             currVel = (currVel + currAcc *dt)
             currPos = pin.integrate(arm.model, currPos, currVel * dt)
-        currAcc = arm.forward(currPos, currVel, torque + torrPd + corrTorque)
+        currAcc = arm.forward(currPos, currVel, torque + corrTorque + torrPd)
         arm.move(currPos, currVel, currAcc)
+        final_traj.torq[i] = torque + corrTorque + torrPd # stores for plot
 
-        final_traj.torq[i] = torque + corrTorque
-
-        # calculate error & correction
+        # calculate end-effector velocity 
         pin.computeJointJacobians(arm.model, arm.data, currPos)
         J = pin.getFrameJacobian(arm.model, arm.data, arm.eeId, pin.LOCAL_WORLD_ALIGNED)
+        eeVel = (J[:3,:]).dot(currVel)
 
-        corrTorque = brain.compute_correction(currPos, currVel)
-        # PD controller .... again ?
-        kp = np.array([10, 10])
+        # PD control
+        kp = np.array([20, 20])
         kd = 2*np.sqrt(kp)
         torrPd = kp*(traj_w_error.pos[i] - currPos) + kd*(traj_w_error.vel[i] - currVel)
 
         # compute error 
-        eeVel = (J[:3,:]).dot(currVel)
         eePosErr = arm.getPos() - desired_ee_traj.pos[i]
         eeVelErr = eeVel - desired_ee_traj.vel[i]
 
-        #brain.update(np.array([eePosErr[0], eePosErr[2]]), np.array([eeVelErr[0], eeVelErr[2]]))
-        brain.update(currPos - traj_no_error.pos[i], currVel - traj_no_error.vel[i])
+        # brain 
+        corrTorque = brain.compute_correction(currPos, currVel)
+        brain.update(np.array([eePosErr[0], eePosErr[2]]), np.array([eeVelErr[0], eeVelErr[2]]))
 
         # store results
         final_traj.pos[i,:]   = currPos
@@ -234,50 +269,24 @@ def main():
         final_traj.acel[i,:]  = currAcc
         final_traj.eePos[i,:] = arm.getPos()
 
-    # plot error torques
-    errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  traj_w_error.torq)]
+    # forward dynamics on the no-brain case for a control 
+    cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
+                                     desired_ee_pos[0], time)
+
+    # calculating error
+    traj_no_error      = makeJointData(arm, desired_ee_pos, time)
+    traj_no_error.torq, _ = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
+    errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  cntrl_traj.torq)]
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]
     errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)]
-    errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  traj_w_error.eePos)]
+    errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  cntrl_traj.eePos)]
+    print(f"total distance error: {np.sum(errDistBrain)}")
 
-    fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
-    axs[0].plot(time, traj_no_error.torq[:,0], linewidth=2)
-    axs[0].plot(time, traj_w_error.torq[:,0], linewidth=2)
-    axs[0].plot(time, final_traj.torq[:,0], linewidth=2)
-    axs[0].set_title("Joint 1 Torque")
-    axs[0].set_ylabel("Torque")
-    axs[0].legend(["Ideal", "No Brain", "Brain"])
-    axs[0].grid(True)
-
-    axs[1].plot(time, traj_no_error.torq[:, 1], linewidth=2)
-    axs[1].plot(time, traj_w_error.torq[:, 1], linewidth=2)
-    axs[1].plot(time, final_traj.torq[:, 1], linewidth=2)
-    axs[1].set_title("Joint 2 Torque")
-    axs[1].set_ylabel("Torque")
-    axs[1].legend(["Ideal", "No Brain", "Brain"])
-    axs[1].grid(True)
-
-    axs[2].plot(time, errTorqNoBrain, linewidth=2)
-    axs[2].plot(time, errTorqBrain, linewidth=2)
-    axs[2].set_title("Torque Error")
-    axs[2].set_ylabel("||τ_des - τ_actual||")
-    axs[2].legend(["No Brain Error", "Brain Error"])
-    axs[2].grid(True)
-
-    axs[3].plot(time, errDistNoBrain, linewidth=2)
-    axs[3].plot(time, errDistBrain, linewidth=2)
-    axs[3].set_title("Distance Error")
-    axs[3].set_xlabel("Time")
-    axs[3].set_ylabel("ee distance error")
-    axs[3].legend(["No Brain Error", "Brain Error"])
-    axs[3].grid(True)
-    plt.show()
+    # plotting 
+    plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, 
+                 errDistNoBrain, errDistBrain)
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
-    viz = MeshcatVisualizer(arm.model, arm.collModel, arm.visualModel)
-    viz.initViewer(open=False)
-    viz.loadViewerModel()
-    while True:
-        viz.play(final_traj.pos, 1/500)
+    playTraj(arm, final_traj, 1/100)
 
 main()

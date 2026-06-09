@@ -15,6 +15,17 @@ from scipy.optimize import fmin_bfgs
 ## create a Joint Angle Error ##################################################
 class JointAngleError(Exception): pass
 
+# makes things look prettier
+class armTraj:
+    def __init__(self, pos=[], vel=[], accel=[], torq=[], time=[], eePos = []):
+        self.pos   = pos
+        self.vel   = vel
+        self.acel  = accel
+        self.torq  = torq
+        self.time  = time
+        self.eePos = eePos
+
+
 ## Simple 2 DoF Motor Controller ###############################################
 class simplest_2dof_controller:
     '''
@@ -232,49 +243,31 @@ class dynamic_3dof_arm:
         joint2 = np.asin(z / r) + np.atan( (L2 * sin(joint3)) / (L1 + L2*np.cos(joint3)) )
         return np.array([joint1, joint2, joint3])
 
-
-    def getJointPosFromEE(self, pos, prevPos = np.array([])):
-        '''
-        Args:
-            pos: joint position
-            prevPos (optional): previous joint position. Defaults to model neutral.
-
-        Returns:
-            a possible joint configuration, minimzing movement between pos and prevPos
-        
-        LOOK INTO DOING THIS NON-ITERATIVELY FOR A 3DOF ARM BECAUSE THATS POSSIBLE
-        AND SAVES A BUNCH OF TIME (METHOD ABOVE)
-        
-        '''
-        # https://gepetto.github.io/doc/pinocchio/doxygen-html/md_doc_b-examples_d-inverse-kinematics.html 
-        
-        if prevPos.size == 0:
-            prevPos = pin.neutral(self.model)
-        self.eeDes = pos.copy()
-
-        # these samples were chosen randomly and without care, should be better
-        # the idea is: find a possible spot from a number of samples
-        # then find the configuration that is the closest to the previous
-        # if you see the sim "jump" in the trajectory
-        # there should be another sample near to where the sim jumped
-        sample_spots = np.array([[0, 0, 0],
-                                [2.18, -1.38, 1.67],
-                                [-2.97, 1.76, -.05],
-                                [0, -2.33, -1.71],
-                                [1.1, -4.01, -1.59],
-                                [-1.63, -3, 0.68],
-                                [-.19, -.19, 0.8],
-                                [.78, 0, 0]])
-        possibConfigs= []
-        for sample in sample_spots:
-            qDes, fopt, _, _, _, _, _ = fmin_bfgs(self.eeError, sample, full_output=True, disp=False)
-            if fopt < 0.01:
-                possibConfigs.append(qDes)
-        # if no config within a cm of the desired, position is unreachable.
-        if not possibConfigs:
-            raise JointAngleError("Point not reachable by arm")
-        dists = list(map(lambda x: np.linalg.norm(x - prevPos), possibConfigs))
-        return possibConfigs[dists.index(min(dists))]
+    def forwardDynamics(self, positions, velocities, torques, starting_ee_pos, time):
+        currPos       = self.getJointPosFromEE(starting_ee_pos) 
+        currVel       = np.zeros_like(currPos)
+        currAcc       = np.zeros_like(currPos)
+        torrPd        = np.zeros_like(currPos)
+        cntrl_traj    = armTraj(pos=np.zeros((len(torques), self.njoints)),
+                                torq=np.zeros((len(torques), self.njoints)),
+                                eePos=np.zeros((len(torques), 3)))
+        kp = np.array([20, 20])
+        kd = 2*np.sqrt(kp)
+        for i, torque in enumerate(torques):
+            # move the arm
+            if i > 0:
+                dt      = time[i] - time[i-1]
+                currVel = (currVel + currAcc *dt)
+                currPos = pin.integrate(self.model, currPos, currVel * dt)
+            currAcc = self.forward(currPos, currVel, torque + torrPd)
+            cntrl_traj.torq[i,:] = torque + torrPd 
+            self.move(currPos, currVel, currAcc)
+            # PD-control
+            torrPd = kp*(positions[i] - currPos) + kd*(velocities[i] - currVel)
+            # store results
+            cntrl_traj.eePos[i,:] = self.getPos()
+            cntrl_traj.pos[i,:]   = currPos
+        return cntrl_traj
 
     def inverseDynamics(self, positions, velocities, accels, time):
         '''
@@ -410,11 +403,11 @@ class cerebellum_marr_albus:
         self.wts           = []
         self.wtsVel        = []
         self.beta          = 0.0005 # learning rate
-        d_x                = np.pi * 0.25
-        d_v                = 15 * 0.25
-        sigma              = np.sqrt(2)*np.sqrt(d_x**2 + d_v**2) # spread parameter
+        d_x                = 5 * 0.5
+        d_v                = 15 * 0.5
+        sigma              = np.sqrt(2)*np.linalg.norm([d_x, d_x, d_v, d_v]) 
 
-        for ctr in combine( np.arange(-np.pi,np.pi,d_x), np.arange(-np.pi,np.pi,d_x), np.arange(-15, 15, d_v), np.arange(-15, 15, d_v)):
+        for ctr in combine( np.arange(-5,5,d_x), np.arange(-5,5,d_x), np.arange(-15, 15, d_v), np.arange(-15, 15, d_v)):
             self.rbfs.append( rbf(ctr,sigma) )
             self.wts.append([0,0])
         self.n_cerebellums = len(self.rbfs) 
@@ -423,19 +416,16 @@ class cerebellum_marr_albus:
         self.activations = np.array([0 for _ in range(self.n_cerebellums)]).reshape(-1, 1)
 
     ###################################
-    # slow
     def update(self,movement_error,velocity_error):
     ###################################
-        lamb = np.array([1,1]) # constant for combining the errors together ?? 
+        lamb = np.array([2,2]) # sliding surface 
         self.wts = self.wts - self.beta * (lamb*movement_error + velocity_error) * self.activations
 
 
 
     ###################################
-    # slow
     def compute_correction(self,pos,vel):
     ###################################
         self.activations = np.array([rbf.compute(np.concatenate((pos,vel))) for rbf in self.rbfs]).reshape(-1, 1)
         corr = np.sum(self.activations * self.wts, axis=0)
-
         return corr 
