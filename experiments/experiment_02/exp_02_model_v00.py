@@ -15,7 +15,7 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
+from exp_02_atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 

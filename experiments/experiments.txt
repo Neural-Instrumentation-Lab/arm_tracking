@@ -1,1 +1,2 @@
 Experiment 01: 2dof arm with no dynamics, just statics
+Experiment 02: 2dof arm with dynamics
