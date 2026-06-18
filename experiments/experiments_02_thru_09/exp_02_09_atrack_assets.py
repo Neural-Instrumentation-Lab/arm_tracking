@@ -148,11 +148,16 @@ class dynamic_3dof_arm:
         self.model, self.collModel, self.visualModel = pin.buildModelsFromUrdf(filename)
         self.data = self.model.createData()
         self.njoints = self.model.njoints - 1 # end effector counts a joint
-        self.lengths = [.31, .4, .39]
-        
-        # end effector data
         self.eeDes = np.array([0, 0, 0]) 
         self.eeId = self.model.getFrameId("ee_fixed_joint")
+
+        # calculate limb lengths
+        pin.framesForwardKinematics(self.model, self.data, pin.neutral(self.model))
+        l1 = np.linalg.norm(self.model.jointPlacements[2].translation)
+        l2 = np.linalg.norm(self.model.jointPlacements[3].translation)
+        l3 = np.linalg.norm(self.data.oMf[self.eeId].translation - self.data.oMi[3].translation)
+        self.lengths = [l1, l2, l3] 
+        # end effector data
         
         # Motor inertias, urdf files don't support these natively for some reason
         self.model.armature = np.array([361.6*10**-6, 415.5*10**-6, 415.5*10**-6]) 
@@ -248,6 +253,10 @@ class dynamic_3dof_arm:
     def getJointPosFromEE(self, pos, prevQ=np.array([0, 0, 0])):
         x, y, z = pos
         L1, L2, L3 = self.lengths
+
+        D = np.linalg.norm([x, y, z-L1])
+        if D > L1 + L2 or D < np.abs(L1-L2):
+            raise JointAngleError(f"Trying to reach to an unreachable location: {pos}")
     
         rho = np.hypot(x, y)
         h = z - L1
@@ -297,7 +306,7 @@ class dynamic_3dof_arm:
         cntrl_traj    = armTraj(pos=np.zeros((len(torques), self.njoints)),
                                 torq=np.zeros((len(torques), self.njoints)),
                                 eePos=np.zeros((len(torques), 3)))
-        kp = np.array([20, 20])
+        kp = np.ones(self.njoints)*20 
         kd = 2*np.sqrt(kp)
         for i, torque in enumerate(torques):
             # move the arm
@@ -445,43 +454,56 @@ class cerebellum_marr_albus:
     '''
 
     ###################################
-    def __init__(self):
+    def __init__(self, n_dims=2):
     ###################################
-        self.n_dims = 2
+        self.n_dims = n_dims
 
         # set up an array of RBFs over the angle space
         self.rbfs          = []
         self.rbfsVel       = []
         self.wts           = []
         self.wtsVel        = []
-        self.beta          = 0.005 # learning rate
+        if n_dims == 3:
+            self.beta = 0.01
+        else:
+            self.beta          = 0.05 # learning rate
+        self.damp          = 0.010 # dampening factor on weight update
         self.epsilon       = 0.001 # lowest error to still update weights
-        d_x                = 5 * 0.5
-        d_v                = 15 * 0.5
-        sigma              = np.linalg.norm([d_x, d_x, d_v, d_v]) 
+        posMax             = 5
+        velMax             = 50
+        d_x                = posMax * 0.5
+        d_v                = velMax * 0.5
+        sigma              = 3 * np.linalg.norm([posMax*2 for _ in range(n_dims)] + [velMax*2 for _ in range(n_dims)]) / np.sqrt(2 * (2*velMax/d_v)**(n_dims) * ((2*posMax)/d_x)**(n_dims)) 
 
-        for ctr in combine( np.arange(-5,5,d_x), np.arange(-5,5,d_x), np.arange(-15, 15, d_v), np.arange(-15, 15, d_v)):
+        gridPnts = []
+        for _ in range(n_dims):
+            gridPnts.append(np.arange(-posMax, posMax, d_x))
+
+        for _ in range(n_dims):
+            gridPnts.append(np.arange(-velMax, velMax, d_v))
+
+        for ctr in combine(*gridPnts):
             self.rbfs.append( rbf(ctr,sigma) )
-            self.wts.append([0,0])
+            self.wts.append(np.zeros(self.n_dims))
         self.n_cerebellums = len(self.rbfs) 
-        self.wts = np.array(self.wts)
+        self.wts = np.array(self.wts).reshape(n_dims, -1)
 
-        self.activations = np.array([0 for _ in range(self.n_cerebellums)]).reshape(-1, 1)
+        self.activations = np.array([0 for _ in range(self.n_cerebellums)]).reshape(1, -1)
 
     ###################################
     def update(self,movement_error,velocity_error):
     ###################################
-        lamb = np.array([1,1]) # sliding surface 
+        lamb = np.ones(self.n_dims)*2 # sliding surface 
         s = (lamb*movement_error + velocity_error)
         if np.linalg.norm(s) < self.epsilon:
             return
-        self.wts = self.wts - self.beta * ((s * self.activations))
+        self.wts = self.wts - self.beta * np.outer(s, self.activations) - self.damp*self.wts*np.linalg.norm(s)
 
 
 
     ###################################
     def compute_correction(self,pos,vel):
     ###################################
-        self.activations = np.array([rbf.compute(np.concatenate((pos,vel))) for rbf in self.rbfs]).reshape(-1, 1)
-        corr = np.sum(self.activations * self.wts, axis=0)
+        self.activations = np.array([rbf.compute(np.concatenate((pos,vel))) for rbf in self.rbfs]).reshape(1, -1)
+        corr = np.sum(self.activations * self.wts, axis=1)
         return corr 

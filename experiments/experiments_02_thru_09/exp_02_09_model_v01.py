@@ -15,7 +15,8 @@ import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
+import sys
+from exp_02_09_atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 
@@ -73,18 +74,24 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("traj_file" , nargs='?', default='traj_004.csv', help='trajectory file name')
-    parser.add_argument("illusory_arm_file" , nargs='?', default='arm_2dofBigIllusion.urdf', help='arm file with wrong lengths name')
+    parser.add_argument("experiment" , nargs='?', default='2', help='select experiment. See experiment.txt')
 
     # parse args and extract filename
     args  = parser.parse_args()
-    fname = args.traj_file
-    armFile = args.illusory_arm_file
+    exp = args.experiment
+    try:
+        exp = int(exp)
+    except:
+        print("invalid argument")
+        sys.exit()
+    if exp > 9 or exp < 2:
+        print("experiment must be between 2-9")
+        sys.exit()
 
-    return fname, armFile
+    return exp
 
 ###################################
-def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain):
+def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain, nDof):
 ###################################    
     '''
     plots desired and actual end effector positions
@@ -100,37 +107,55 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
         errDistBrain:           distance errors with brain
     '''
     
-    fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
-    axs[0].plot(time, traj_no_error.torq[:,0], linewidth=2)
-    axs[0].plot(time, traj_w_error.torq[:,0], linewidth=2)
-    axs[0].plot(time, final_traj.torq[:,0], linewidth=2)
-    axs[0].set_title("Joint 1 Torque")
-    axs[0].set_ylabel("Torque")
-    axs[0].legend(["Ideal", "No Brain", "Brain"])
-    axs[0].grid(True)
+    if nDof == 3:
+        fig, axs = plt.subplots(5, 1, figsize=(12, 10), sharex=True)
+    else:
+        fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
 
-    axs[1].plot(time, traj_no_error.torq[:, 1], linewidth=2)
-    axs[1].plot(time, traj_w_error.torq[:, 1], linewidth=2)
-    axs[1].plot(time, final_traj.torq[:, 1], linewidth=2)
-    axs[1].set_title("Joint 2 Torque")
-    axs[1].set_ylabel("Torque")
-    axs[1].legend(["Ideal", "No Brain", "Brain"])
-    axs[1].grid(True)
+    pltN = 0
+    axs[pltN].plot(time, traj_no_error.torq[:,0], linewidth=2)
+    axs[pltN].plot(time, traj_w_error.torq[:,0], linewidth=2)
+    axs[pltN].plot(time, final_traj.torq[:,0], linewidth=2)
+    axs[pltN].set_title("Joint 1 Torque")
+    axs[pltN].set_ylabel("Torque")
+    axs[pltN].legend(["Ideal", "No Brain", "Brain"])
+    axs[pltN].grid(True)
 
-    axs[2].plot(time, errTorqNoBrain, linewidth=2)
-    axs[2].plot(time, errTorqBrain, linewidth=2)
-    axs[2].set_title("Torque Error")
-    axs[2].set_ylabel("||τ_des - τ_actual||")
-    axs[2].legend(["No Brain Error", "Brain Error"])
-    axs[2].grid(True)
+    pltN += 1
+    axs[pltN].plot(time, traj_no_error.torq[:, 1], linewidth=2)
+    axs[pltN].plot(time, traj_w_error.torq[:, 1], linewidth=2)
+    axs[pltN].plot(time, final_traj.torq[:, 1], linewidth=2)
+    axs[pltN].set_title("Joint 2 Torque")
+    axs[pltN].set_ylabel("Torque")
+    axs[pltN].legend(["Ideal", "No Brain", "Brain"])
+    axs[pltN].grid(True)
 
-    axs[3].plot(time, errDistNoBrain, linewidth=2)
-    axs[3].plot(time, errDistBrain, linewidth=2)
-    axs[3].set_title("Distance Error")
-    axs[3].set_xlabel("Time")
-    axs[3].set_ylabel("ee distance error")
-    axs[3].legend(["No Brain Error", "Brain Error"])
-    axs[3].grid(True)
+    if nDof == 3:
+        pltN += 1
+        axs[pltN].plot(time, traj_no_error.torq[:, 2], linewidth=2)
+        axs[pltN].plot(time, traj_w_error.torq[:, 2], linewidth=2)
+        axs[pltN].plot(time, final_traj.torq[:, 2], linewidth=2)
+        axs[pltN].set_title("Joint 3 Torque")
+        axs[pltN].set_ylabel("Torque")
+        axs[pltN].legend(["Ideal", "No Brain", "Brain"])
+        axs[pltN].grid(True)
+
+    pltN += 1
+    axs[pltN].plot(time, errTorqNoBrain, linewidth=2)
+    axs[pltN].plot(time, errTorqBrain, linewidth=2)
+    axs[pltN].set_title("Torque Error")
+    axs[pltN].set_ylabel("||τ_des - τ_actual||")
+    axs[pltN].legend(["No Brain Error", "Brain Error"])
+    axs[pltN].grid(True)
+
+    pltN += 1
+    axs[pltN].plot(time, errDistNoBrain, linewidth=2)
+    axs[pltN].plot(time, errDistBrain, linewidth=2)
+    axs[pltN].set_title("Distance Error")
+    axs[pltN].set_xlabel("Time")
+    axs[pltN].set_ylabel("ee distance error")
+    axs[pltN].legend(["No Brain Error", "Brain Error"])
+    axs[pltN].grid(True)
     plt.show()
 
 
@@ -198,15 +223,58 @@ def main():
 ###################################
 
     # load user preferences from command line
-    fname, armFile = parse_args()
+    traj_files      = {2 : "traj_004.csv",
+                        3 : "traj_004.csv",
+                        4 : "traj_004.csv",
+                        5 : "traj_005.csv",
+                        6 : "traj_003.csv",
+                        7 : "traj_004.csv",
+                        8 : "traj_004.csv",
+                        9 : "traj_004.csv"}
+    arm_files       = {2 : "arm_2dof.urdf",
+                        3 : "arm_2dof.urdf",
+                        4 : "arm_3dof.urdf",
+                        5 : "arm_2dof.urdf",
+                        6 : "arm_3dof.urdf",
+                        7 : "arm_2dof.urdf",
+                        8 : "arm_2dof.urdf",
+                        9 : "arm_3dof.urdf"}
+    illusion_files  = {2 : "arm_2dofBigIllusion.urdf",
+                        3 : "arm_2dofIllusoryLengths.urdf",
+                        4 : "arm_3dofIllusion.urdf",
+                        5 : "arm_2dofBigIllusion.urdf",
+                        6 : "arm_3dofIllusion.urdf",
+                        7 : "arm_2dofIllusoryMass.urdf",
+                        8 : "arm_2dofBigIllusoryMass.urdf",
+                        9 : "arm_3dofIllusoryMass.urdf"}
+    dof = {2 : 2,
+           3: 2,
+           4: 3,
+           5: 2,
+           6 : 3,
+           7 : 2,
+           8 : 2,
+           9 : 3}
+
+    experiment = parse_args()
+
+    fname      = traj_files[experiment]
+    armFile    = arm_files[experiment]
+    illFile    = illusion_files[experiment]
+    n_dof      = dof[experiment]
 
     # load end effector trajectory
     desired_ee_pos, time, n_dim = get_trajectory(fname)   
 
     # instantiate limb, motor control unit, brain    
-    arm         = dynamic_2dof_arm("models/arm_2dof.urdf") 
-    illusoryArm = dynamic_2dof_arm("models/"+armFile) 
-    brain       = cerebellum_marr_albus()
+    if n_dof == 2:
+        arm         = dynamic_2dof_arm("models/"+armFile) 
+        illusoryArm = dynamic_2dof_arm("models/"+illFile) 
+    else:
+        arm         = dynamic_3dof_arm("models/"+armFile) 
+        illusoryArm = dynamic_3dof_arm("models/"+illFile) 
+
+    brain           = cerebellum_marr_albus(n_dims=arm.njoints)
 
     # turn gravity off
     #arm.model.gravity = pin.Motion.Zero()
@@ -233,7 +301,7 @@ def main():
     corrTorque = np.zeros_like(currPos)
     torrPd = np.zeros_like(currPos)
 
-    kp = np.array([20, 20])
+    kp = np.ones(arm.njoints)*20 
     kd = 2*np.sqrt(kp)
     for i, torque in enumerate(traj_w_error.torq):
         corrTorque = brain.compute_correction(currPos, currVel)
@@ -260,7 +328,10 @@ def main():
         eeVelErr = eeVel - desired_ee_traj.vel[i]
 
         # brain 
-        brain.update(np.array([eePosErr[0], eePosErr[2]]), np.array([eeVelErr[0], eeVelErr[2]]))
+        if n_dof == 3:
+            brain.update(eePosErr, eeVelErr)
+        else:
+            brain.update(np.array([eePosErr[0], eePosErr[2]]), np.array([eeVelErr[0], eeVelErr[2]]))
 
         # store results
         final_traj.pos[i,:]   = currPos
@@ -272,7 +343,6 @@ def main():
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
                                      desired_ee_pos[0], time)
 
-    print((cntrl_traj.torq == final_traj.torq).all())
 
     # calculating error
     traj_no_error      = makeJointData(arm, desired_ee_pos, time)
@@ -285,7 +355,7 @@ def main():
 
     # plotting 
     plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
-                 errDistNoBrain, errDistBrain)
+                 errDistNoBrain, errDistBrain, n_dof)
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = initViz(arm)

@@ -1,2 +1,16 @@
 Experiment 01: 2dof arm with no dynamics, just statics
-Experiment 02: 2dof arm with dynamics
+The following experiments are all contained withing file: XXXX.py run the following experiments by selecting
+the experiment number from the command line. Results are in /results folder
+2: 2dof arm with length error. Brain converges and reduces error.
+3: 2dof Arm with small length error. Brain converges but increases error
+4: 3dof with 2d trajectory and length error. Brain converges but increases error. 
+5: 2dof arm with more complicated trajectory and length error. Brain converges and reduces error. 
+6: 3dof with 3d trajectory and length error. Brain flails but converges at end
+7: 2dof Arm with Illusroy Mass .5kg brain converges and reduces error.
+8: 2dof Arm with Illusory Mass 5kg brain converges and reduces error.
+9: 3dof Arm with Illusory Mass .5kg brain converges but increases error. 
+
+commentary on exp 2-9: The model could no doubt be tuned to be far better, but as it is it does not generalize
+well into 3dof. The model could be tuned to specific trajectories better as well, or made to be more 
+dynamic (dynamically placing rbf centers or decay terms), but as it is now the model does well on large errors
+in 2dof in either mass or length

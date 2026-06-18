@@ -120,12 +120,12 @@ def create_traj_003():
 ###################################
     ''' Trajectory 03- a line for the 3dof arm 
     '''
-    f = 1
-    fs = 60 
-    t = np.arange(0, 10, 1/fs)
-    x = np.linspace(0, 0.5, len(t)) 
-    y = np.linspace(0, -0.2, len(t)) 
-    z = np.linspace(1.1, 0.3, len(t)) 
+    f = 2
+    fs = 500 
+    t = np.arange(0, 1, 1/fs)
+    x = np.linspace(0.3, 0.1, len(t)) 
+    y = np.linspace(0.4, -0.2, len(t)) 
+    z = np.linspace(0.8, 0.5, len(t)) 
     array = build_array(t,x,y, z)
     fname = 'trajectories/traj_003.csv'
     save_data(fname,array)
@@ -152,10 +152,10 @@ def create_traj_005():
     ''' Trajectory 05 - a sinusoid in x and z
         for dynamic 2dof arm (static link .31 high)
     '''
-    f = 1
+    f = 2
     f2 = 2
-    fs = 10000
-    t = np.arange(0, 3, 1/fs)
+    fs = 500
+    t = np.arange(0, 6, 1/fs)
     x = 0.5*np.cos(2*np.pi*f*t)
     y = [0 for _ in x] # this arm has no dof in the y-axis
     z = np.array(0.2*np.cos(2*np.pi*f2*t) + 0.6) # this arm has no dof in the y-axis
