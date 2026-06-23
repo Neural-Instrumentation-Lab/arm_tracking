@@ -425,28 +425,6 @@ class dynamic_2dof_arm(dynamic_3dof_arm):
             for name, oMi in zip(self.model.names, self.data.oMi):
                 print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
 
-## Radial Basis Function *######################################################
-class rbf:
-    '''
-    Radial Basis Function
-        Returns activation strength of a given RBF cell
-        Currently a 2D RBF
-    '''
-    ###################################
-    def __init__(self , c , sigma):
-    ###################################
-        ''' Constructor '''
-        self.c , self.sigma = c,sigma
-    
-    ###################################
-    # slow, should implement in c++
-    def compute(self,x):
-        term1 = np.linalg.norm(x - self.c)
-        term2 = -(term1**2)/(2*self.sigma**2)
-        activation = exp(term2)
-        return activation
-
-## Marr Albus Cerebellum #######################################################
 class cerebellum_marr_albus:
     '''
     Marr-Albus cerebellum
@@ -459,8 +437,6 @@ class cerebellum_marr_albus:
         self.n_dims = n_dims
 
         # set up an array of RBFs over the angle space
-        self.rbfs          = []
-        self.rbfsVel       = []
         self.wts           = []
         self.wtsVel        = []
         if n_dims == 3:
@@ -482,12 +458,15 @@ class cerebellum_marr_albus:
         for _ in range(n_dims):
             gridPnts.append(np.arange(-velMax, velMax, d_v))
 
+        centers = []
         for ctr in combine(*gridPnts):
-            self.rbfs.append( rbf(ctr,sigma) )
+            centers.append(ctr)
             self.wts.append(np.zeros(self.n_dims))
-        self.n_cerebellums = len(self.rbfs) 
-        self.wts = np.array(self.wts).reshape(n_dims, -1)
-
+        self.wts = np.array(self.wts)
+        self.wts = self.wts.reshape(self.n_dims, -1)
+        self.centers = np.array(centers)        # shape (n_cerebellums, 2*n_dims)
+        self.n_cerebellums = self.centers.shape[0]
+        self.sigma   = sigma
         self.activations = np.array([0 for _ in range(self.n_cerebellums)]).reshape(1, -1)
 
     ###################################
@@ -499,11 +478,12 @@ class cerebellum_marr_albus:
             return
         self.wts = self.wts - self.beta * np.outer(s, self.activations) - self.damp*self.wts*np.linalg.norm(s)
 
-
-
     ###################################
     def compute_correction(self,pos,vel):
     ###################################
-        self.activations = np.array([rbf.compute(np.concatenate((pos,vel))) for rbf in self.rbfs]).reshape(1, -1)
+        x = np.concatenate((pos, vel))
+        diff = self.centers - x
+        dist2 = np.einsum('ij,ij->i', diff, diff)
+        self.activations = np.exp(-dist2 / (2 * self.sigma**2)).reshape(1, -1)
         corr = np.sum(self.activations * self.wts, axis=1)
-        return corr 
+        return corr

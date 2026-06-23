@@ -16,7 +16,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 import sys
-from atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
+from arm_assets_v01 import simplest_2dof_limb, simplest_2dof_controller, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
+from porril_brain_v01 import cerebellum_marr_albus
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 
@@ -74,7 +75,7 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("experiment" , nargs='?', default='2', help='select experiment. See experiment.txt')
+    parser.add_argument("experiment" , nargs='?', default='6', help='select experiment. See experiment.txt')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -342,8 +343,6 @@ def main():
     # forward dynamics on the no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
                                      desired_ee_pos[0], time)
-
-    print((cntrl_traj.torq == final_traj.torq).all())
 
     # calculating error
     traj_no_error      = makeJointData(arm, desired_ee_pos, time)
