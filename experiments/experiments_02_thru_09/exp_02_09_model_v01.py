@@ -19,6 +19,7 @@ import sys
 from exp_02_09_atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
+import pickle
 
 matplotlib.use('TkAgg')
 
@@ -74,7 +75,8 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("experiment" , nargs='?', default='2', help='select experiment. See experiment.txt')
+    parser.add_argument("experiment" , nargs='?', default='9', help='select experiment. See experiment.txt')
+    parser.add_argument("--save", help='saves the outputted trajectories.', action='store_true')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -88,7 +90,7 @@ def parse_args():
         print("experiment must be between 2-9")
         sys.exit()
 
-    return exp
+    return exp, args.save
 
 ###################################
 def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain, nDof):
@@ -217,6 +219,14 @@ def makeEEData(pos, t):
     armData = armTraj(pos, velocity, acceleration)
     return armData 
 
+def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
+    data = {
+        key: {"arm": arm_ids[key], "pos": traj.pos, "dt":dt}
+        for key, traj in trajectories.items()
+    }
+    with open(filename, "wb") as f:
+        pickle.dump(data, f)
+
 
 ###################################
 def main():
@@ -256,7 +266,7 @@ def main():
            8 : 2,
            9 : 3}
 
-    experiment = parse_args()
+    experiment, save = parse_args()
 
     fname      = traj_files[experiment]
     armFile    = arm_files[experiment]
@@ -357,6 +367,13 @@ def main():
     plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
                  errDistNoBrain, errDistBrain, n_dof)
 
+    # saving trajectories
+    if save:
+        trajectories = {1: traj_no_error, 2: traj_w_error, 3: final_traj}
+        arm_ids = {1: armFile, 2: illFile, 3: armFile}  # swap in your actual arm identifiers
+        save_trajectories(trajectories, arm_ids, time[1] - time[0])
+
+
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = initViz(arm)
     while True:
@@ -378,6 +395,6 @@ def main():
             print("not valid input")
             continue
 
-        viz.play(trajectories[userTraj].pos, 1/100)
+        viz.play(trajectories[userTraj].pos, time[1] - time[0])
 
 main()
