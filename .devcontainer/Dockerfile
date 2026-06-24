@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     git \
     openssh-client \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
