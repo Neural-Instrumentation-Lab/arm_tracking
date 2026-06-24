@@ -241,7 +241,7 @@ def main():
     then renders a two-panel animation: the arm tracking the target on the left,
     and endpoint error (with and without cerebellum) on the right.
     """
-    x_target, n_pts = trajectory_001()
+    x_target, n_pts = trajectory_004()
     m_values = np.zeros((n_pts, 2))
     el_values = np.zeros((n_pts, 2))
     wr_values = np.zeros((n_pts, 2))
