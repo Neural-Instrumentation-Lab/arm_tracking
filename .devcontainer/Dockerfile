@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     git \
     openssh-client \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -20,7 +21,8 @@ WORKDIR /workspace
 
 # Copy and install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN python -m pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
+    pip install --no-cache-dir ruff
 
 # Set matplotlib backend to TkAgg for interactive plots
 ENV MPLBACKEND=TkAgg

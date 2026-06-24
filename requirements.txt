@@ -3,3 +3,5 @@ matplotlib
 scipy
 pin
 meshcat
+ipykernel
+pybind11
