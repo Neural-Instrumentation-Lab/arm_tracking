@@ -157,7 +157,6 @@ class dynamic_3dof_arm:
         l2 = np.linalg.norm(self.model.jointPlacements[3].translation)
         l3 = np.linalg.norm(self.data.oMf[self.eeId].translation - self.data.oMi[3].translation)
         self.lengths = [l1, l2, l3] 
-        print(self.lengths)
         # end effector data
         
         # Motor inertias, urdf files don't support these natively for some reason
@@ -299,33 +298,49 @@ class dynamic_3dof_arm:
         # joint2 = np.asin((z-L1) / r) + np.atan2(L2*np.sin(joint3), (L2 + L3*np.cos(joint3)))
         # return np.array([joint1, joint2, joint3])
 
-    def forwardDynamics(self, positions, velocities, torques, starting_ee_pos, time):
-        currPos       = self.getJointPosFromEE(starting_ee_pos) 
-        currVel       = np.zeros_like(currPos)
-        currAcc       = np.zeros_like(currPos)
+    def forwardDynamics(self, positions, velocities, torques, starting_ee_pos, time, n_substeps=100):
+        '''
+        Same as forwardDynamics, but integrates n_substeps inner steps
+        between each pair of trajectory samples instead of one big step
+        at the trajectory's native dt. Torque is held constant (zero-order
+        hold) across the inner steps of a given interval.
+        '''
+        currPos = positions[0]              # exact starting joint config (bug #1 fix)
+        currVel = np.zeros_like(currPos)
+
+        cntrl_traj = armTraj(pos=np.zeros((len(torques), self.njoints)),
+                            torq=np.zeros((len(torques), self.njoints)),
+                            eePos=np.zeros((len(torques), 3)))
+
+        # record sample 0 as-is, no integration needed yet
+        currAcc = self.forward(currPos, currVel, torques[0])
+        self.move(currPos, currVel, currAcc)
+        cntrl_traj.pos[0, :]   = currPos
+        cntrl_traj.torq[0, :]  = torques[0]
+        cntrl_traj.eePos[0, :] = self.getPos()
         torrPd        = np.zeros_like(currPos)
-        cntrl_traj    = armTraj(pos=np.zeros((len(torques), self.njoints)),
-                                torq=np.zeros((len(torques), self.njoints)),
-                                eePos=np.zeros((len(torques), 3)))
+
         kp = np.ones(self.njoints)*20 
         kd = 2*np.sqrt(kp)
-        for i, torque in enumerate(torques):
-            # move the arm
+        for i in range(1, len(torques)):
+            dt     = time[i] - time[i-1]
+            h      = dt / n_substeps
             torrPd = kp*(positions[i] - currPos) + kd*(velocities[i] - currVel)
-            if i > 0:
-                dt      = time[i] - time[i-1]
-                currVel = (currVel + currAcc *dt)
-                currPos = pin.integrate(self.model, currPos, currVel * dt)
-            currAcc = self.forward(currPos, currVel, torque + torrPd)
-            cntrl_traj.torq[i,:] = torque + torrPd 
+            torque = torques[i] + torrPd          # ZOH: held constant over this whole interval
+
+            for _ in range(n_substeps):
+                currAcc = self.forward(currPos, currVel, torque)
+                currVel = currVel + currAcc * h
+                currPos = pin.integrate(self.model, currPos, currVel * h)
+
             self.move(currPos, currVel, currAcc)
-            # PD-control
-            # store results
-            cntrl_traj.eePos[i,:] = self.getPos()
-            cntrl_traj.pos[i,:]   = currPos
+            cntrl_traj.pos[i, :]   = currPos
+            cntrl_traj.torq[i, :]  = torque 
+            cntrl_traj.eePos[i, :] = self.getPos()
+
         return cntrl_traj
 
-    def inverseDynamics(self, positions, velocities, accels, time):
+    def inverseDynamics(self, positions, velocities, accels, time, n_substeps=100):
         '''
         creates the ideal torques along a given trajectory
         filtered through a PD controller to reduce numerical error
@@ -351,11 +366,15 @@ class dynamic_3dof_arm:
         for i, (posCorr, velCorr, accCorr) in enumerate(zip(positions, velocities, accels)):
             torques[i, :]   = self.inverse(posCorr, velCorr, accCorr) # ideal torque
             torquesPD[i, :] = torques[i, :] + kp*(posCorr - pos) + kd*(velCorr - vel)
-            acc             = self.forward(pos, vel, torquesPD[i, :])
             if i > 0:
                 dt  = time[i] - time[i-1]
-                vel = vel + acc * dt 
-                pos = pin.integrate(self.model, pos, vel*dt)
+                h      = dt / n_substeps
+                torque = torquesPD[i]          # ZOH: held constant over this whole interval
+                for _ in range(n_substeps):
+                    acc = self.forward(pos, vel, torque)
+                    vel = vel + acc * h
+                    pos = pin.integrate(self.model, pos, vel * h)
+
             self.move(pos, vel, acc)
             eePos[i,:] = self.getPos()
         return torquesPD, eePos

@@ -20,7 +20,7 @@ class cerebellum_marr_albus:
             self.beta = 0.01
         else:
             self.beta          = 0.05 # learning rate
-        self.damp          = 0.010 # dampening factor on weight update
+        self.damp          = 0.01 # dampening factor on weight update
         self.epsilon       = 0.001 # lowest error to still update weights
         posMax             = 5
         velMax             = 50

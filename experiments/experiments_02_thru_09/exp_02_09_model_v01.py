@@ -184,10 +184,8 @@ def makeJointData(arm, trajectory, t):
         else:
             j = arm.getJointPosFromEE(coord)
         joints[i, :] = j
-        if i > 0:
-            dt = (t[i] - t[i-1])
-            velocity[i, :] = angle_diff(j, joints[i-1,:]) / dt
-            acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
+    velocity = np.gradient(joints, t, axis=0)
+    acceleration = np.gradient(velocity, t, axis=0)
 
     armData = armTraj(joints, velocity, acceleration)
     return armData 
@@ -208,13 +206,8 @@ def initViz(arm):
 
 def makeEEData(pos, t):
 
-    velocity = np.zeros_like(pos)
-    acceleration = np.zeros_like(pos)
-    for i, coord in enumerate(pos):
-        if i > 0:
-            dt = (t[i] - t[i-1])
-            velocity[i, :] = (coord - pos[i-1,:]) / dt
-            acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
+    velocity = np.gradient(pos, t, axis=0)
+    acceleration = np.gradient(velocity, t, axis=0)
 
     armData = armTraj(pos, velocity, acceleration)
     return armData 

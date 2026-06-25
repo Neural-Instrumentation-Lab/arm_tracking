@@ -20,6 +20,7 @@ from arm_assets_v01 import simplest_2dof_limb, simplest_2dof_controller, dynamic
 from porril_brain_v01 import cerebellum_marr_albus
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
+import pickle
 
 matplotlib.use('TkAgg')
 
@@ -75,7 +76,8 @@ def parse_args():
     '''
     # set up parser
     parser = argparse.ArgumentParser()
-    parser.add_argument("experiment" , nargs='?', default='6', help='select experiment. See experiment.txt')
+    parser.add_argument("experiment" , nargs='?', default='2', help='select experiment. See experiment.txt')
+    parser.add_argument("--save", help='saves the outputted trajectories.', action='store_true')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -89,7 +91,7 @@ def parse_args():
         print("experiment must be between 2-9")
         sys.exit()
 
-    return exp
+    return exp, args.save
 
 ###################################
 def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain, nDof):
@@ -183,10 +185,8 @@ def makeJointData(arm, trajectory, t):
         else:
             j = arm.getJointPosFromEE(coord)
         joints[i, :] = j
-        if i > 0:
-            dt = (t[i] - t[i-1])
-            velocity[i, :] = angle_diff(j, joints[i-1,:]) / dt
-            acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
+    velocity = np.gradient(joints, t, axis=0)
+    acceleration = np.gradient(velocity, t, axis=0)
 
     armData = armTraj(joints, velocity, acceleration)
     return armData 
@@ -207,16 +207,19 @@ def initViz(arm):
 
 def makeEEData(pos, t):
 
-    velocity = np.zeros_like(pos)
-    acceleration = np.zeros_like(pos)
-    for i, coord in enumerate(pos):
-        if i > 0:
-            dt = (t[i] - t[i-1])
-            velocity[i, :] = (coord - pos[i-1,:]) / dt
-            acceleration[i, :] = (velocity[i,:] - velocity[i-1,:]) / dt
+    velocity = np.gradient(pos, t, axis=0)
+    acceleration = np.gradient(velocity, t, axis=0)
 
     armData = armTraj(pos, velocity, acceleration)
     return armData 
+
+def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
+    data = {
+        key: {"arm": arm_ids[key], "pos": traj.pos, "dt":dt}
+        for key, traj in trajectories.items()
+    }
+    with open(filename, "wb") as f:
+        pickle.dump(data, f)
 
 
 ###################################
@@ -257,7 +260,7 @@ def main():
            8 : 2,
            9 : 3}
 
-    experiment = parse_args()
+    experiment, save = parse_args()
 
     fname      = traj_files[experiment]
     armFile    = arm_files[experiment]
@@ -344,6 +347,7 @@ def main():
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
                                      desired_ee_pos[0], time)
 
+
     # calculating error
     traj_no_error      = makeJointData(arm, desired_ee_pos, time)
     traj_no_error.torq, _ = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
@@ -356,6 +360,13 @@ def main():
     # plotting 
     plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
                  errDistNoBrain, errDistBrain, n_dof)
+
+    # saving trajectories
+    if save:
+        trajectories = {1: traj_no_error, 2: traj_w_error, 3: final_traj}
+        arm_ids = {1: armFile, 2: illFile, 3: armFile}  # swap in your actual arm identifiers
+        save_trajectories(trajectories, arm_ids, time[1] - time[0])
+
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = initViz(arm)
@@ -378,6 +389,6 @@ def main():
             print("not valid input")
             continue
 
-        viz.play(trajectories[userTraj].pos, 1/100)
+        viz.play(trajectories[userTraj].pos, time[1] - time[0])
 
 main()
