@@ -163,21 +163,6 @@ def create_traj_005():
     fname = 'trajectories/traj_005.csv'
     save_data(fname,array)
 
-
-def create_traj_006():
-    '''
-    figure 8 trajectory
-    '''
-    f = 1
-    fs = 500
-    t = np.arange(0, 1, 1/fs)
-    x = 0.2*np.cos(2*np.pi*f*t)
-    y = 0.2*np.sin(4*np.pi*f*t)*np.cos(2*np.pi*f*t)
-    z = np.array([0.6 for _ in x])  # this arm has no dof in the y-axis
-    array = build_array(t,x,y,z)
-    fname = 'trajectories/traj_006.csv'
-    save_data(fname,array)
-
 ## MAIN ###################################################################
 
 ###################################
@@ -218,7 +203,6 @@ def main():
     elif args.trajectory_id == '3': create_traj_003()
     elif args.trajectory_id == '4': create_traj_004()
     elif args.trajectory_id == '5': create_traj_005()
-    elif args.trajectory_id == '6': create_traj_006()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")

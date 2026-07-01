@@ -184,7 +184,7 @@ def makeJointData(arm, trajectory, t):
         else:
             j = arm.getJointPosFromEE(coord)
         joints[i, :] = j
-    velocity = np.gradient(joints, t, axis=0)
+    velocity = np.gradient(np.unwrap(joints, axis=0), t, axis=0)
     acceleration = np.gradient(velocity, t, axis=0)
 
     armData = armTraj(joints, velocity, acceleration)
