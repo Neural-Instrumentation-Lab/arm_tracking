@@ -1,12 +1,13 @@
 '''
-MODEL V00
+MODEL V01
 
-First implementation of 2D arm movement with cerebellar
-error correction
+Implementation of cerebellar error correction
+with dynamic 3dof arm, the cerebellar model is 
+from the paper "Distributed cerebellar plasticity implements adaptable gain control in a 
+manipulation task: a closed-loop robotic simulation" by Garrido et All
 
-@Author: Iyad Obeid
-@Date: Fall 2023
-
+@Author: James Soley
+@Date: Summer 2026
 '''
 
 ## IMPORTS #####################################################################
@@ -60,7 +61,6 @@ def get_trajectory(fname:str):
     traj  = data[:,1:]
     n_dim = traj.shape[1]
 
-    # exit gracefully
     return traj,t,n_dim
 
 ###################################
@@ -69,10 +69,13 @@ def parse_args():
     '''
     Parses commandline arguments
 
-    Collects trajectory file name from commandline
+    Collects experiment number from command line 
+    and whether the user wants to save the traj data
+    CURRENTLY UNUSED
 
     Returns:
-        fname(string)
+        experiment (int)
+        save (bool)
     '''
     # set up parser
     parser = argparse.ArgumentParser()
@@ -110,11 +113,13 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
         errDistBrain:           distance errors with brain
     '''
     
+    # choose to plot the 3rd joint plot based on ndof
     if nDof == 3:
         fig, axs = plt.subplots(5, 1, figsize=(12, 10), sharex=True)
     else:
         fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
 
+    # plot joint 1 torque
     pltN = 0
     axs[pltN].plot(time, traj_no_error.torq[:,0], linewidth=2)
     axs[pltN].plot(time, traj_w_error.torq[:,0], linewidth=2)
@@ -124,6 +129,7 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
     axs[pltN].legend(["Ideal", "No Brain", "Brain"])
     axs[pltN].grid(True)
 
+    # plot joint 2 torque
     pltN += 1
     axs[pltN].plot(time, traj_no_error.torq[:, 1], linewidth=2)
     axs[pltN].plot(time, traj_w_error.torq[:, 1], linewidth=2)
@@ -133,6 +139,7 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
     axs[pltN].legend(["Ideal", "No Brain", "Brain"])
     axs[pltN].grid(True)
 
+    # plot joint 3 torque
     if nDof == 3:
         pltN += 1
         axs[pltN].plot(time, traj_no_error.torq[:, 2], linewidth=2)
@@ -143,6 +150,7 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
         axs[pltN].legend(["Ideal", "No Brain", "Brain"])
         axs[pltN].grid(True)
 
+    # plot total absolute mean torque error
     pltN += 1
     axs[pltN].plot(time, errTorqNoBrain, linewidth=2)
     axs[pltN].plot(time, errTorqBrain, linewidth=2)
@@ -151,6 +159,7 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
     axs[pltN].legend(["No Brain Error", "Brain Error"])
     axs[pltN].grid(True)
 
+    # plot total absolute mean distance error
     pltN += 1
     axs[pltN].plot(time, errDistNoBrain, linewidth=2)
     axs[pltN].plot(time, errDistBrain, linewidth=2)
@@ -204,7 +213,17 @@ def initViz(arm):
     return viz
 
 def makeEEData(pos, t):
+    '''
+    creates the velocities and accelerations of 
+    the end-effector given positions (cartesian)
 
+    Args:
+        pos: end-effector coordinates
+        t: corresponding time vector
+    Returns:
+        armData: trajectory object containing the end effector
+                 data
+    '''
     velocity = np.gradient(pos, t, axis=0)
     acceleration = np.gradient(velocity, t, axis=0)
 
@@ -212,6 +231,18 @@ def makeEEData(pos, t):
     return armData 
 
 def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
+    '''
+    saves the travelled trajectories for further viewing
+    without having to rerun the simulation
+    trajectories can be played with the experiments/play_arm_path.py
+    file.
+    
+    Args:
+        trajectories: dictionary corresponding the traj id to the actual trajectory
+        arm_ids: dictionary corresponding the traj id to the arm file name
+        dt: timestep (constant throughout the playback)
+        filename: output filename
+    '''
     data = {
         key: {"arm": arm_ids[key], "pos": traj.pos, "dt":dt}
         for key, traj in trajectories.items()
@@ -219,67 +250,37 @@ def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
     with open(filename, "wb") as f:
         pickle.dump(data, f)
 
+def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
+    '''
+    Controls the arm with the cerebellar feedback loop
 
-###################################
-def main():
-###################################
-
-    # load user preferences from command line
-    experiment, save = parse_args()
-
-    fname      = "traj_006.csv" 
-    armFile    = "arm_3dofIllusoryMassBigger.urdf" 
-    illFile    = "arm_3dof.urdf" 
-    n_dof      = 3 
-
-    # load end effector trajectory
-    desired_ee_pos, time, n_dim = get_trajectory(fname)   
-
-    # instantiate limb, motor control unit, brain    
-    if n_dof == 2:
-        arm         = dynamic_2dof_arm("models/"+armFile) 
-        illusoryArm = dynamic_2dof_arm("models/"+illFile) 
-    else:
-        arm         = dynamic_3dof_arm("models/"+armFile) 
-        illusoryArm = dynamic_3dof_arm("models/"+illFile) 
-
-    brain           = cerebellum(n_dof=arm.njoints)
-
-    # turn gravity off
-    #arm.model.gravity = pin.Motion.Zero()
-    #illusoryArm.model.gravity = pin.Motion.Zero()
-
-    # IK computing the necessary torques along a trajectory
-    # PD controller because otherwise it will diverge
-    # Computed for an arm with different lengths to introduce error
-    traj_w_error      = makeJointData(illusoryArm, desired_ee_pos, time)
-    traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
-
-    # FD applying those computed torques to the actual arm
-    # with control loop from the cerebellum
+    Args:
+    Returns:
+        final_traj: Trajectory object containing results from the final trajectory
+    '''
+    # arm starts with no velocity or acceleration and the first position along the traj
     currPos       = traj_w_error.pos[0,:] 
     currVel       = np.zeros_like(currPos)
     currAcc       = np.zeros_like(currPos)
     arm.move(currPos, currVel, currAcc)
     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
                             torq=np.zeros_like(traj_w_error.torq),
-                            eePos=np.zeros_like(desired_ee_pos),
+                            eePos=np.zeros_like(desired_ee_traj.pos),
                             vel = np.zeros_like(traj_w_error.vel),
                             accel=np.zeros_like(traj_w_error.acel))
-    desired_ee_traj = makeEEData(desired_ee_pos, time)
     corrTorque = np.zeros_like(currPos)
     torrPd = np.zeros_like(currPos)
-
     nTrials = 150
     errorTot = np.zeros(nTrials)
+    # PD Constants
     kp = np.ones(arm.njoints)*20
     kd = 2*np.sqrt(kp)
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
-            # 
             # compute error 
             qError  = traj_w_error.pos[i] - currPos
             qdError = traj_w_error.vel[i] - currVel
+            # compute corrections
             corrTorque = brain.compute(qError, qdError)
             torrPd = kp*(qError) + kd*(qdError)
 
@@ -297,20 +298,58 @@ def main():
             final_traj.vel[i,:]   = currVel
             final_traj.acel[i,:]  = currAcc
             final_traj.eePos[i,:] = arm.getPos()
-        # reset
+        # reset between each trial
         errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)])
         currPos       = traj_w_error.pos[0,:] 
         currVel       = np.zeros_like(currPos)
         currAcc       = np.zeros_like(currPos)
         arm.move(currPos, currVel, currAcc)
         brain.resetTraj()
+    return final_traj, errorTot
+
+
+###################################
+def main():
+###################################
+    # load user preferences from command line (UNUSED CURRENTLY)
+    experiment, save = parse_args()
+
+    # hardcoded for easy changing CURRENTLY
+    fname      = "traj_006.csv" 
+    armFile    = "arm_3dofIllusoryMass.urdf" 
+    illFile    = "arm_3dof.urdf" 
+    n_dof      = 3 
+
+    # load end effector trajectory
+    desired_ee_pos, time, n_dim = get_trajectory(fname)   
+    desired_ee_traj = makeEEData(desired_ee_pos, time)
+
+    # instantiate limb, motor control unit, brain    
+    if n_dof == 2:
+        arm         = dynamic_2dof_arm("models/"+armFile) 
+        illusoryArm = dynamic_2dof_arm("models/"+illFile) 
+    else:
+        arm         = dynamic_3dof_arm("models/"+armFile) 
+        illusoryArm = dynamic_3dof_arm("models/"+illFile) 
+    brain           = cerebellum(n_dof=arm.njoints)
+
+    # turn gravity off
+    #arm.model.gravity = pin.Motion.Zero()
+    #illusoryArm.model.gravity = pin.Motion.Zero()
+
+    # Inverse Dynamics: computing the torques along a trajectory (with error)
+    traj_w_error      = makeJointData(illusoryArm, desired_ee_pos, time)
+    traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
+
+    # Forward Dynamics: applying those computed torques to the actual arm
+    # with a control feedback from the cerebellar model 
+    final_traj, errorTot = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain)
 
     # forward dynamics on the no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
                                      desired_ee_pos[0], time)
 
-
-    # calculating error
+    # calculating error for plotting
     traj_no_error      = makeJointData(arm, desired_ee_pos, time)
     traj_no_error.torq, _ = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
     errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  cntrl_traj.torq)]
@@ -319,9 +358,10 @@ def main():
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  cntrl_traj.eePos)]
     print(f"total distance error: {np.sum(errDistBrain)}")
 
-    # plotting 
+    # plotting arm data
     plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
                  errDistNoBrain, errDistBrain, n_dof)
+    # plotting brain data
     plt.plot(errorTot)
     plt.xlabel("Trial")
     plt.ylabel("Total Mean Distance Error")
@@ -329,12 +369,12 @@ def main():
     plt.axhline(np.sum(errDistNoBrain), color='r', linestyle='--', linewidth=2)
     plt.legend(["Brain Erorr", "No Brain Error"])
     plt.show()
+
     # saving trajectories
     if save:
         trajectories = {1: traj_no_error, 2: traj_w_error, 3: final_traj}
         arm_ids = {1: armFile, 2: illFile, 3: armFile}  # swap in your actual arm identifiers
         save_trajectories(trajectories, arm_ids, time[1] - time[0])
-
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     viz = initViz(arm)
@@ -344,19 +384,17 @@ def main():
                         3 : final_traj}
         userTraj = input("select the trajectory to watch:\n1: desired trajectory"
                          "\n2: trajectory with no brain\n3: trajectory with brain\nq: exit\n")
+        # quits
         if userTraj == "q":
             break
-
         try:
             userTraj = int(userTraj)
         except:
             print("not valid input")
             continue
-        
         if userTraj > 3 or userTraj < 1:
             print("not valid input")
             continue
-
         viz.play(trajectories[userTraj].pos, time[1] - time[0])
 
 main()

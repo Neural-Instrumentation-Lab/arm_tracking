@@ -255,7 +255,7 @@ class dynamic_3dof_arm:
         L1, L2, L3 = self.lengths
 
         D = np.linalg.norm([x, y, z-L1])
-        if D > L1 + L2 or D < np.abs(L1-L2):
+        if D > L2 + L3 or D < np.abs(L2-L3):
             raise JointAngleError(f"Trying to reach to an unreachable location: {pos}")
     
         rho = np.hypot(x, y)
@@ -320,7 +320,7 @@ class dynamic_3dof_arm:
         cntrl_traj.eePos[0, :] = self.getPos()
         torrPd        = np.zeros_like(currPos)
 
-        kp = np.ones(self.njoints)*20 
+        kp = np.ones(self.njoints)*20
         kd = 2*np.sqrt(kp)
         for i in range(1, len(torques)):
             dt     = time[i] - time[i-1]

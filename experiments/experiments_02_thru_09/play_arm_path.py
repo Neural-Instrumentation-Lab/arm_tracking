@@ -3,6 +3,15 @@ import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 from exp_02_09_atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
 
+"""
+HOW TO WATCH TRAJECTORIES:
+1. RUN THIS FILE
+2. FOLLOW CLI INSTRUCTIONS
+3. Speed multiplier 1 is normal speed
+4. trajectory will play on the given url
+5. CTRL + L_CLICK to view in vs code
+
+"""
 class Trajectory:
     """Lightweight stand-in so traj.pos still works like before."""
     def __init__(self, pos, arm, dt):
@@ -54,27 +63,35 @@ if __name__ == "__main__":
 
     trajectories = load_trajectories(filename="experiments/experiments_02_thru_09/results/arm_paths/path_exp_0"+str(experiment)+".pkl")
  
+    prevChoice = 0
     while True:
         userTraj = input("select the trajectory to watch:\n1: desired trajectory"
-                          "\n2: trajectory with no brain\n3: trajectory with brain\nq: exit\n")
+                          "\n2: trajectory with no brain\n3: trajectory with brain\nq: exit\n"
+                          "r: play last played traj\n")
         if userTraj == "q":
             break
-        try:
-            userTraj = int(userTraj)
-        except ValueError:
-            print("not valid input")
-            continue
- 
-        if userTraj not in trajectories:
-            print("not valid input")
-            continue
- 
+        if userTraj == "r":
+            if prevChoice == 0:
+                print("no trajectory to replay")
+                continue
+            else:
+                viz.play(traj.pos, traj.dt*speed)
+                continue
+        else:
+            try:
+                userTraj = int(userTraj)
+            except ValueError:
+                print("not valid input")
+                continue
+            if userTraj not in trajectories:
+                print("not valid input")
+                continue
+        prevChoice = userTraj
         traj = trajectories[userTraj]
         if traj.pos.shape[1] == 2:
             arm         = dynamic_2dof_arm("models/"+traj.arm) 
         if traj.pos.shape[1] == 3:
             arm         = dynamic_3dof_arm("models/"+traj.arm) 
         viz = initViz(arm)
-
         viz.play(traj.pos, traj.dt*speed)
  

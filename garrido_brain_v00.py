@@ -20,44 +20,76 @@ class cerebellum:
         self.alpha = 1000 # LTP decay factor
 
     def granuleLayer(self):
+        '''
+        The granular layer translates the 
+        inputs to the parallel fibers,
+        which act as a state machine (discritizing the motion)
+        '''
         self.currPF += 1
         if self.currPF > self.nPFs:
             raise BrainError("More timesteps then parallel fibers")
 
     def updatePF_PC(self, error):
+        '''
+        updates the synaptic weights between the parallel fibers
+        and the purkinje cell
+        '''
         self.pf_pc_weights[self.currPF-1,:] += (self.LTP_max / ((error+1)**self.alpha)) - self.LTD_max*error
         self.pf_pc_weights[self.currPF-1,:] = np.clip(self.pf_pc_weights[self.currPF-1,:], 0, 1)
 
     def purkinjeCompute(self, motorError):
+        '''
+        computes the purkinje cell firing rate [0 - 1]
+        '''
         self.updatePF_PC(motorError)
         self.purAct = self.pf_pc_weights[self.currPF-1, :].copy() 
         self.purAct = np.clip(self.purAct, 0, 1)
 
     def updateMF_DCN(self):
+        '''
+        updates the synaptic weights between the mossy fibers and the 
+        deep cerebellar nuclei
+        '''
         self.mf_dcn_weights += (self.LTP_max_dcn / ((self.purAct + 1)**self.alpha)) - self.LTD_max_dcn*self.purAct
         self.mf_dcn_weights = np.clip(self.mf_dcn_weights, 0, None) 
 
     def updatePC_DCN(self):
+        '''
+        updates the weights between the purkinje cell
+        and the deep cerebellar nuclei
+        '''
         dcn_clipped = np.clip(self.dcnAct, 0, 1)
         self.pc_dcn_weights += ((self.LTP_max_dcn * self.purAct**self.alpha) / ((dcn_clipped + 1)**self.alpha)) - self.LTD_max_dcn*(1-self.purAct)
         self.pc_dcn_weights = np.clip(self.pc_dcn_weights, 0, None) 
 
     def DCNCompute(self):
+        '''
+        computes the deep cerebellar nuclei's activation,
+        which is the torque outputs (for each muscle)
+        '''
         self.updateMF_DCN()
         self.updatePC_DCN()
         self.dcnAct = self.mf_dcn_weights - self.purAct*self.pc_dcn_weights 
 
     def dcnToTorque(self):
+        '''
+        takes the DCN's output and adds antagonist and agonist together
+        to make joint torque commands
+        '''
         corr = self.dcnAct.copy()
         corr[1::2] *= -1
         corr = (corr).reshape(-1, 2).sum(axis=1) 
         return corr
     
     def compute(self, qError, qdError):
+        '''
+        updates the entire brain given the error signals
+        '''
         # combine errors
         self.granuleLayer()
-        s = [2, 2, 2]
-        error = qError + s * qdError 
+        posCon = [2, 2, 2]
+        velCon = [1, 1, 1]
+        error = posCon*qError + velCon*qdError 
         agonist = np.maximum(error, 0)
         antagonist = np.maximum(-error, 0)
         error = np.stack([agonist, antagonist], axis=1).reshape(-1)  # (n_muscles,)
@@ -68,4 +100,8 @@ class cerebellum:
         return self.dcnToTorque()
     
     def resetTraj(self):
+        '''
+        sets the parallel fibers back to initial 
+        state
+        '''
         self.currPF = 0

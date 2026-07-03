@@ -12,7 +12,7 @@ for the simulated 2D arm to attempt to track.
 ## IMPORTS #####################################################################
 import numpy as np
 import argparse
-
+from arm_assets_v01 import dynamic_3dof_arm
 ## HELPER FUNCTIONS ############################################################
 
 ###################################
@@ -163,6 +163,64 @@ def create_traj_005():
     fname = 'trajectories/traj_005.csv'
     save_data(fname,array)
 
+
+def clip_to_reachable(pos, lengths):
+    '''
+    helper for create_traj_006
+    only works for a 3dof arm
+    '''
+    L1, L2, L3 = lengths
+    rel = np.array([pos[0], pos[1], pos[2] - L1])
+    D = np.linalg.norm(rel)
+
+    r_min, r_max = abs(L2 - L3), L2 + L3
+
+    if D > r_max:
+        rel = rel * (r_max / D)
+    elif D < r_min:
+        rel = rel * (r_min / D) 
+
+    rel = np.array([rel[0], rel[1], rel[2] + L1])
+    return rel 
+
+def create_traj_006():
+    ''' one(?) of the trajectories in the garrido matlab
+    from cin_inv_och3joints.m 
+    it is a 8-figure trajectory but not the one in 
+    figure 5A in their 2013 paper
+    '''
+    fs = 500
+    t = np.arange(0, 1, 1/fs)
+    y = 0.1 * np.sin(2*np.pi * t)+0.21502
+    z = 0.1 * np.sin(4 * np.pi * t)+0.18502
+    x = np.ones(len(t)) * 0.5
+    array = build_array(t,x,y,z)
+    fname = 'trajectories/traj_006.csv'
+    save_data(fname,array)
+
+    # f = 2
+    # fs = 500
+    # t = np.arange(0, 1, 1/fs)
+    # q1 = 0.1*np.sin(f*np.pi*t)
+    # q2 = 0.1*np.sin(f*np.pi*t + np.pi/4)
+    # q3 = 0.1*np.sin(f*np.pi*t + np.pi/2)
+    
+    # # because of floating point error some of these positions on the boundary of the 
+    # # reachability will be unreachable, so we have to go and check this positions
+    # # to see if valid
+    # arm   = dynamic_3dof_arm("models/arm_3dof.urdf", disp=False) 
+    # fixed_pos = np.zeros((fs, 3))
+    # for i in range(fs):
+    #     pos = np.array(q1[i], q2[i], q3[i])
+    #     coord = arm.getEEFromJoint(np.array(pos))
+    #     coord = clip_to_reachable(pos, arm.lengths)
+    #     arm.getJointPosFromEE(coord)
+    #     fixed_pos[i, :] = coord
+    # data = np.concat([t.reshape(-1, 1), fixed_pos], axis=1)
+    # fname = 'trajectories/traj_006.csv'
+    # save_data(fname, data) 
+        
+        
 ## MAIN ###################################################################
 
 ###################################
@@ -203,6 +261,7 @@ def main():
     elif args.trajectory_id == '3': create_traj_003()
     elif args.trajectory_id == '4': create_traj_004()
     elif args.trajectory_id == '5': create_traj_005()
+    elif args.trajectory_id == '6': create_traj_006()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")
