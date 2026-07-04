@@ -36,12 +36,14 @@ def build_array(t,x,y, z=np.array([])):
 ###################################
     '''build_array(t,x,y)
         Builds a 2D array of three columns, suitable for saving into a csv file
+        or a 3D array of four columns
     Args:
     Returns:'''
     if z.size == 0:
         return np.array([t,x,y]).T
     else:
         return np.array([t,x,y,z]).T
+
 
 ###################################
 def save_data(fname,array):
@@ -194,7 +196,13 @@ def create_traj_006():
     y = 0.1 * np.sin(2*np.pi * t)+0.21502
     z = 0.1 * np.sin(4 * np.pi * t)+0.18502
     x = np.ones(len(t)) * 0.5
-    array = build_array(t,x,y,z)
+    dx = np.zeros_like(t)
+    dy = 0.1*2*np.pi*np.cos(2*np.pi*t)
+    dz = 0.1*4*np.pi*np.cos(4*np.pi*t)
+    ddx = np.zeros_like(t)
+    ddy = -0.1*4*np.pi*np.pi*np.sin(2*np.pi*t)
+    ddz = -0.1*16*np.pi*np.pi*np.sin(4*np.pi*t)
+    array = np.array([t,x,y,z,dx,dy,dz,ddx,ddy,ddz]).T
     fname = 'trajectories/traj_006.csv'
     save_data(fname,array)
 

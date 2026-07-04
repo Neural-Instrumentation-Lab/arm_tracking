@@ -175,6 +175,8 @@ def makeJointData(arm, trajectory, t):
     '''
     constructs joint positions, velocities, and accelerations
     for a given trajectory of the end-effector.
+    calculates angular vel and acceleration thru joint Jacobian
+    instead of derivative to reduce error thru derivation
 
     Args:
         arm: arm class.
@@ -185,17 +187,32 @@ def makeJointData(arm, trajectory, t):
         velocity: joint angular velocities
         acceleration: joint angular accelerations 
     '''
-    joints = np.zeros((len(trajectory), arm.njoints))
-    for i, coord in enumerate(trajectory):
+    joints = np.zeros((len(trajectory.pos), arm.njoints))
+    vels = np.zeros_like(joints)
+    accs = np.zeros_like(joints)
+    v = np.zeros(3)
+    a = np.zeros(3)
+    for i, coord in enumerate(trajectory.pos):
         if i > 0:
             j = arm.getJointPosFromEE(coord, joints[i-1,:])
         else:
             j = arm.getJointPosFromEE(coord)
         joints[i, :] = j
-    velocity = np.gradient(np.unwrap(joints, axis=0), t, axis=0)
-    acceleration = np.gradient(velocity, t, axis=0)
 
-    armData = armTraj(joints, velocity, acceleration)
+        pin.forwardKinematics(arm.model, arm.data, j, v)
+        pin.computeJointJacobians(arm.model, arm.data, j)
+        pin.computeJointJacobiansTimeVariation(arm.model, arm.data, j, v)
+        J    = pin.getFrameJacobian(arm.model, arm.data, arm.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
+        Jdot = pin.getFrameJacobianTimeVariation(arm.model, arm.data, arm.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
+        v = np.linalg.pinv(J) @ trajectory.vel[i, :] 
+        a = np.linalg.pinv(J) @ (trajectory.acel[i,:] - Jdot @ trajectory.vel[i,:])
+        vels[i, :] = v
+        accs[i, :] = a
+
+    #velocity = np.gradient(np.unwrap(joints, axis=0), t, axis=0)
+    #acceleration = np.gradient(velocity, t, axis=0)
+
+    armData = armTraj(joints, vels, accs)
     return armData 
 
 def initViz(arm):
@@ -270,7 +287,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
                             accel=np.zeros_like(traj_w_error.acel))
     corrTorque = np.zeros_like(currPos)
     torrPd = np.zeros_like(currPos)
-    nTrials = 150
+    nTrials = 1500
     errorTot = np.zeros(nTrials)
     # PD Constants
     kp = np.ones(arm.njoints)*20
@@ -316,13 +333,15 @@ def main():
 
     # hardcoded for easy changing CURRENTLY
     fname      = "traj_006.csv" 
-    armFile    = "arm_3dofIllusoryMass.urdf" 
+    armFile    = "arm_3dofIllusoryMassBigger.urdf" 
     illFile    = "arm_3dof.urdf" 
     n_dof      = 3 
 
     # load end effector trajectory
-    desired_ee_pos, time, n_dim = get_trajectory(fname)   
-    desired_ee_traj = makeEEData(desired_ee_pos, time)
+    desired_ee_data, time, n_dim = get_trajectory(fname)   
+    desired_ee_traj = armTraj(desired_ee_data[:, 0:3], desired_ee_data[:, 3:6], desired_ee_data[:, 6:9])
+    # use if traj doesn't have derivative data
+    #desired_ee_traj = makeEEData(desired_ee_data, time)
 
     # instantiate limb, motor control unit, brain    
     if n_dof == 2:
@@ -338,7 +357,7 @@ def main():
     #illusoryArm.model.gravity = pin.Motion.Zero()
 
     # Inverse Dynamics: computing the torques along a trajectory (with error)
-    traj_w_error      = makeJointData(illusoryArm, desired_ee_pos, time)
+    traj_w_error      = makeJointData(illusoryArm, desired_ee_traj, time)
     traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
 
     # Forward Dynamics: applying those computed torques to the actual arm
@@ -347,10 +366,10 @@ def main():
 
     # forward dynamics on the no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
-                                     desired_ee_pos[0], time)
+                                     desired_ee_traj.pos[0], time)
 
     # calculating error for plotting
-    traj_no_error      = makeJointData(arm, desired_ee_pos, time)
+    traj_no_error      = makeJointData(arm, desired_ee_traj, time)
     traj_no_error.torq, _ = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
     errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  cntrl_traj.torq)]
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]

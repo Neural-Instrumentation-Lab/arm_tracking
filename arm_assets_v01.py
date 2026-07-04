@@ -324,14 +324,12 @@ class dynamic_3dof_arm:
         kd = 2*np.sqrt(kp)
         for i in range(1, len(torques)):
             dt     = time[i] - time[i-1]
-            h      = dt / n_substeps
             torrPd = kp*(positions[i] - currPos) + kd*(velocities[i] - currVel)
             torque = torques[i] + torrPd          # ZOH: held constant over this whole interval
 
-            for _ in range(n_substeps):
-                currAcc = self.forward(currPos, currVel, torque)
-                currVel = currVel + currAcc * h
-                currPos = pin.integrate(self.model, currPos, currVel * h)
+            currAcc = self.forward(currPos, currVel, torque)
+            currVel = currVel + currAcc * dt
+            currPos = pin.integrate(self.model, currPos, currVel * dt)
 
             self.move(currPos, currVel, currAcc)
             cntrl_traj.pos[i, :]   = currPos
@@ -368,12 +366,10 @@ class dynamic_3dof_arm:
             torquesPD[i, :] = torques[i, :] + kp*(posCorr - pos) + kd*(velCorr - vel)
             if i > 0:
                 dt  = time[i] - time[i-1]
-                h      = dt / n_substeps
                 torque = torquesPD[i]          # ZOH: held constant over this whole interval
-                for _ in range(n_substeps):
-                    acc = self.forward(pos, vel, torque)
-                    vel = vel + acc * h
-                    pos = pin.integrate(self.model, pos, vel * h)
+                acc = self.forward(pos, vel, torque)
+                vel = vel + acc * dt
+                pos = pin.integrate(self.model, pos, vel * dt)
 
             self.move(pos, vel, acc)
             eePos[i,:] = self.getPos()
