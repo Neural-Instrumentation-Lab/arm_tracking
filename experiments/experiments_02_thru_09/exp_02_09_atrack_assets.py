@@ -12,6 +12,16 @@ from numpy import sin, cos, arccos, exp
 from itertools import product as combine
 import pinocchio as pin
 from scipy.optimize import fmin_bfgs
+
+# Optional C++ acceleration for the substep integration inner loops.
+# Build with:  bash build_ext.sh   (inside the Dev Container)
+try:
+    import pin_ext as _pin_ext
+    _USE_PIN_EXT = True
+except ImportError:
+    _pin_ext = None
+    _USE_PIN_EXT = False
+
 ## create a Joint Angle Error ##################################################
 class JointAngleError(Exception): pass
 
@@ -328,10 +338,14 @@ class dynamic_3dof_arm:
             torrPd = kp*(positions[i] - currPos) + kd*(velocities[i] - currVel)
             torque = torques[i] + torrPd          # ZOH: held constant over this whole interval
 
-            for _ in range(n_substeps):
-                currAcc = self.forward(currPos, currVel, torque)
-                currVel = currVel + currAcc * h
-                currPos = pin.integrate(self.model, currPos, currVel * h)
+            if _USE_PIN_EXT:
+                currPos, currVel, currAcc = _pin_ext.euler_substeps(
+                    self.model, self.data, currPos, currVel, torque, h, n_substeps)
+            else:
+                for _ in range(n_substeps):
+                    currAcc = self.forward(currPos, currVel, torque)
+                    currVel = currVel + currAcc * h
+                    currPos = pin.integrate(self.model, currPos, currVel * h)
 
             self.move(currPos, currVel, currAcc)
             cntrl_traj.pos[i, :]   = currPos
@@ -370,10 +384,14 @@ class dynamic_3dof_arm:
                 dt  = time[i] - time[i-1]
                 h      = dt / n_substeps
                 torque = torquesPD[i]          # ZOH: held constant over this whole interval
-                for _ in range(n_substeps):
-                    acc = self.forward(pos, vel, torque)
-                    vel = vel + acc * h
-                    pos = pin.integrate(self.model, pos, vel * h)
+                if _USE_PIN_EXT:
+                    pos, vel, acc = _pin_ext.euler_substeps(
+                        self.model, self.data, pos, vel, torque, h, n_substeps)
+                else:
+                    for _ in range(n_substeps):
+                        acc = self.forward(pos, vel, torque)
+                        vel = vel + acc * h
+                        pos = pin.integrate(self.model, pos, vel * h)
 
             self.move(pos, vel, acc)
             eePos[i,:] = self.getPos()
