@@ -121,30 +121,27 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
 
     # plot joint 1 torque
     pltN = 0
-    axs[pltN].plot(time, traj_no_error.torq[:,0], linewidth=2)
-    axs[pltN].plot(time, traj_w_error.torq[:,0], linewidth=2)
-    axs[pltN].plot(time, final_traj.torq[:,0], linewidth=2)
-    axs[pltN].set_title("Joint 1 Torque")
+    axs[pltN].plot(time, traj_no_error.torq[:,0] - traj_w_error.torq[:,0], linewidth=2, linestyle='--')
+    axs[pltN].plot(time, final_traj.torq[:,0] - traj_w_error.torq[:,0], linewidth=2)
+    axs[pltN].set_title("Joint 1 Corrective Torque")
     axs[pltN].set_ylabel("Torque")
-    axs[pltN].legend(["Ideal", "No Brain", "Brain"])
+    axs[pltN].legend(["Ideal", "Brain"])
     axs[pltN].grid(True)
 
     # plot joint 2 torque
     pltN += 1
-    axs[pltN].plot(time, traj_no_error.torq[:, 1], linewidth=2)
-    axs[pltN].plot(time, traj_w_error.torq[:, 1], linewidth=2)
-    axs[pltN].plot(time, final_traj.torq[:, 1], linewidth=2)
-    axs[pltN].set_title("Joint 2 Torque")
+    axs[pltN].plot(time, traj_no_error.torq[:,1] - traj_w_error.torq[:,1], linewidth=2, linestyle='--')
+    axs[pltN].plot(time, final_traj.torq[:,1] - traj_w_error.torq[:,1], linewidth=2)
+    axs[pltN].set_title("Joint 2 Corrective Torque")
     axs[pltN].set_ylabel("Torque")
-    axs[pltN].legend(["Ideal", "No Brain", "Brain"])
+    axs[pltN].legend(["Ideal", "Brain"])
     axs[pltN].grid(True)
 
     # plot joint 3 torque
     if nDof == 3:
         pltN += 1
-        axs[pltN].plot(time, traj_no_error.torq[:, 2], linewidth=2)
-        axs[pltN].plot(time, traj_w_error.torq[:, 2], linewidth=2)
-        axs[pltN].plot(time, final_traj.torq[:, 2], linewidth=2)
+        axs[pltN].plot(time, traj_no_error.torq[:,2] - traj_w_error.torq[:,2], linewidth=2, linestyle='--')
+        axs[pltN].plot(time, final_traj.torq[:,2] - traj_w_error.torq[:,2], linewidth=2)
         axs[pltN].set_title("Joint 3 Torque")
         axs[pltN].set_ylabel("Torque")
         axs[pltN].legend(["Ideal", "No Brain", "Brain"])
@@ -295,7 +292,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
-            qError  = traj_w_error.pos[i] - currPos
+            qError  = angle_diff(traj_w_error.pos[i], currPos)
             qdError = traj_w_error.vel[i] - currVel
             # compute corrections
             corrTorque = brain.compute(qError, qdError)
@@ -321,7 +318,6 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
         currVel       = np.zeros_like(currPos)
         currAcc       = np.zeros_like(currPos)
         arm.move(currPos, currVel, currAcc)
-        brain.resetTraj()
     return final_traj, errorTot
 
 
@@ -334,7 +330,7 @@ def main():
     # hardcoded for easy changing CURRENTLY
     fname      = "traj_006.csv" 
     armFile    = "arm_3dofIllusoryMassBigger.urdf" 
-    illFile    = "arm_3dof.urdf" 
+    illFile    = "arm_3dofIllusion.urdf" 
     n_dof      = 3 
 
     # load end effector trajectory
@@ -390,30 +386,45 @@ def main():
     plt.show()
 
     # saving trajectories
+    trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
+    arm_ids = {1: armFile, 2: armFile, 3: armFile, 4: illFile}  # swap in your actual arm identifiers
     if save:
-        trajectories = {1: traj_no_error, 2: traj_w_error, 3: final_traj}
-        arm_ids = {1: armFile, 2: illFile, 3: armFile}  # swap in your actual arm identifiers
-        save_trajectories(trajectories, arm_ids, time[1] - time[0])
+       save_trajectories(trajectories, arm_ids, time[1] - time[0])
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
-    viz = initViz(arm)
+    dt = time[1] - time[0]
+    prevChoice = 0
     while True:
-        trajectories = {1 : traj_no_error,
-                        2 : traj_w_error,
-                        3 : final_traj}
         userTraj = input("select the trajectory to watch:\n1: desired trajectory"
-                         "\n2: trajectory with no brain\n3: trajectory with brain\nq: exit\n")
-        # quits
+                          "\n2: trajectory with no brain\n3: trajectory with brain\n"
+                          "4: trajectory ID thought it was following\nq: exit\n"
+                          "r: play last played traj\n")
         if userTraj == "q":
             break
-        try:
-            userTraj = int(userTraj)
-        except:
-            print("not valid input")
-            continue
-        if userTraj > 3 or userTraj < 1:
-            print("not valid input")
-            continue
-        viz.play(trajectories[userTraj].pos, time[1] - time[0])
+        if userTraj == "r":
+            if prevChoice == 0:
+                print("no trajectory to replay")
+                continue
+            else:
+                viz.play(traj.pos, dt)
+                continue
+        else:
+            try:
+                userTraj = int(userTraj)
+            except ValueError:
+                print("not valid input")
+                continue
+            if userTraj not in trajectories:
+                print("not valid input")
+                continue
+        traj = trajectories[userTraj]
+        if prevChoice == 0 or arm_ids[userTraj] != arm_ids[prevChoice]:
+            if arm_ids[userTraj] == armFile:
+                playArm = arm
+            else:
+                playArm = illusoryArm
+            viz = initViz(playArm)
+        viz.play(traj.pos, dt)
+        prevChoice = userTraj
 
 main()

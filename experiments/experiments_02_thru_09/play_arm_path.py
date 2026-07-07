@@ -66,8 +66,9 @@ if __name__ == "__main__":
     prevChoice = 0
     while True:
         userTraj = input("select the trajectory to watch:\n1: desired trajectory"
-                          "\n2: trajectory with no brain\n3: trajectory with brain\nq: exit\n"
-                          "r: play last played traj\n")
+                         "\n2: trajectory with no brain\n3: trajectory with brain\n"
+                         "4: trajectory ID thought it was following\nq: exit\n"
+                         "r: play last played traj\n")
         if userTraj == "q":
             break
         if userTraj == "r":
@@ -86,12 +87,13 @@ if __name__ == "__main__":
             if userTraj not in trajectories:
                 print("not valid input")
                 continue
-        prevChoice = userTraj
         traj = trajectories[userTraj]
-        if traj.pos.shape[1] == 2:
-            arm         = dynamic_2dof_arm("models/"+traj.arm) 
-        if traj.pos.shape[1] == 3:
-            arm         = dynamic_3dof_arm("models/"+traj.arm) 
-        viz = initViz(arm)
+        if prevChoice == 0 or traj.arm != trajectories[prevChoice].arm:
+            if traj.pos.shape[1] == 2:
+                arm         = dynamic_2dof_arm("models/"+traj.arm, disp=False) 
+            if traj.pos.shape[1] == 3:
+                arm         = dynamic_3dof_arm("models/"+traj.arm, disp=False) 
+            viz = initViz(arm)
         viz.play(traj.pos, traj.dt*speed)
+        prevChoice = userTraj
  

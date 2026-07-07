@@ -1,6 +1,23 @@
-Experiment 01: 2dof arm with no dynamics, just statics
-The following experiments are all contained withing file: XXXX.py run the following experiments by selecting
-the experiment number from the command line. Results are in /results folder
+Experiment 01: 
+2dof arm with no dynamics, just statics can be found in experiment_01/ and run from exp_01_model_v00.py
+
+Experiments 02 - 09:
+2dof or 3dof arm with dynamics using the porril-style rbf cerebellum.
+These experiments are all contained within the file: exp_02_09_model_v01.py run them by selecting
+the experiment number from the command line. Results are in /results folder. To watch the simulated trajectories without 
+rerunning the experiment, run the play_arm_path.py file.
+
+EXPLANATIONS ON THE FOUR TRAJECTORIES PER EXPERIMENT:
+each experiment has four trajectories associated it, which can be viewed by running the exp or the play arm path file
+1: desired trajectory. This is the trajectory with no error. It is computed by ID -> FD with no error introduced.
+2: trajectory with no brain. This is the trajectory with no cerebellar control loop. 
+It is computed by ID (faulty somehow, either with wrong lengths or wrong masses) -> FD
+3: trajectory with brain. This is the result of the experiment. 
+It is computed by ID (with error) + brain correction -> FD
+4: trajectory erroneous ID thought is was following. This is computed with ID (with error) -> FD (with same error)
+so for the errors that are length-based, the video playback shows the arm that the ID thought it was controlling. 
+
+List of experiments 02-09:
 2: 2dof arm with length error. Brain converges and reduces error.
 3: 2dof Arm with small length error. Brain converges but increases error
 4: 3dof with 2d trajectory and length error. Brain converges but increases error. 

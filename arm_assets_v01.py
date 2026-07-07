@@ -292,12 +292,6 @@ class dynamic_3dof_arm:
 
         return np.array(sol)
 
-        # r = np.sqrt(x**2 + y**2 + (z-L1)**2)
-        # joint1 = np.atan2(y,x)
-        # joint3 = -np.acos( (x**2 + y**2 + (z-L1)**2 - L2**2 * L3**2) / (2*L2*L3))
-        # joint2 = np.asin((z-L1) / r) + np.atan2(L2*np.sin(joint3), (L2 + L3*np.cos(joint3)))
-        # return np.array([joint1, joint2, joint3])
-
     def forwardDynamics(self, positions, velocities, torques, starting_ee_pos, time, n_substeps=100):
         '''
         Same as forwardDynamics, but integrates n_substeps inner steps
@@ -324,8 +318,8 @@ class dynamic_3dof_arm:
         kd = 2*np.sqrt(kp)
         for i in range(1, len(torques)):
             dt     = time[i] - time[i-1]
-            torrPd = kp*(positions[i] - currPos) + kd*(velocities[i] - currVel)
-            torque = torques[i] + torrPd          # ZOH: held constant over this whole interval
+            torrPd = kp*angle_diff(positions[i], currPos) + kd*(velocities[i] - currVel)
+            torque = torques[i] + torrPd         
 
             currAcc = self.forward(currPos, currVel, torque)
             currVel = currVel + currAcc * dt
@@ -363,10 +357,10 @@ class dynamic_3dof_arm:
         acc       = np.zeros_like(pos)
         for i, (posCorr, velCorr, accCorr) in enumerate(zip(positions, velocities, accels)):
             torques[i, :]   = self.inverse(posCorr, velCorr, accCorr) # ideal torque
-            torquesPD[i, :] = torques[i, :] + kp*(posCorr - pos) + kd*(velCorr - vel)
+            torquesPD[i, :] = torques[i, :] + kp*angle_diff(posCorr, pos) + kd*(velCorr - vel)
             if i > 0:
                 dt  = time[i] - time[i-1]
-                torque = torquesPD[i]          # ZOH: held constant over this whole interval
+                torque = torquesPD[i]       
                 acc = self.forward(pos, vel, torque)
                 vel = vel + acc * dt
                 pos = pin.integrate(self.model, pos, vel * dt)

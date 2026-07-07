@@ -77,6 +77,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("experiment" , nargs='?', default='9', help='select experiment. See experiment.txt')
     parser.add_argument("--save", help='saves the outputted trajectories.', action='store_true')
+    parser.add_argument("--show_outputs", help='when true, program outputs graphs and prompts for what traj to play.', action='store_false')
 
     # parse args and extract filename
     args  = parser.parse_args()
@@ -90,7 +91,7 @@ def parse_args():
         print("experiment must be between 2-9")
         sys.exit()
 
-    return exp, args.save
+    return exp, args.save, args.show_outputs
 
 ###################################
 def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain, nDof):
@@ -259,7 +260,7 @@ def main():
            8 : 2,
            9 : 3}
 
-    experiment, save = parse_args()
+    experiment, save, showOutput = parse_args()
 
     fname      = traj_files[experiment]
     armFile    = arm_files[experiment]
@@ -356,38 +357,54 @@ def main():
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  cntrl_traj.eePos)]
     print(f"total distance error: {np.sum(errDistBrain)}")
 
-    # plotting 
-    plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
-                 errDistNoBrain, errDistBrain, n_dof)
-
     # saving trajectories
+    trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
+    arm_ids = {1: armFile, 2: armFile, 3: armFile, 4: illFile}  # swap in your actual arm identifiers
     if save:
-        trajectories = {1: traj_no_error, 2: traj_w_error, 3: final_traj}
-        arm_ids = {1: armFile, 2: illFile, 3: armFile}  # swap in your actual arm identifiers
         save_trajectories(trajectories, arm_ids, time[1] - time[0])
 
+    # rest of program is showing outputs
+    if not showOutput:
+        sys.exit()
+
+    # plotting 
+    plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
+                errDistNoBrain, errDistBrain, n_dof)
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
-    viz = initViz(arm)
+    dt = time[1] - time[0]
+    prevChoice = 0
     while True:
-        trajectories = {1 : traj_no_error,
-                        2 : traj_w_error,
-                        3 : final_traj}
         userTraj = input("select the trajectory to watch:\n1: desired trajectory"
-                         "\n2: trajectory with no brain\n3: trajectory with brain\nq: exit\n")
+                          "\n2: trajectory with no brain\n3: trajectory with brain\n"
+                          "4: trajectory ID thought it was following\nq: exit\n"
+                          "r: play last played traj\n")
         if userTraj == "q":
             break
-
-        try:
-            userTraj = int(userTraj)
-        except:
-            print("not valid input")
-            continue
-        
-        if userTraj > 3 or userTraj < 1:
-            print("not valid input")
-            continue
-
-        viz.play(trajectories[userTraj].pos, time[1] - time[0])
+        if userTraj == "r":
+            if prevChoice == 0:
+                print("no trajectory to replay")
+                continue
+            else:
+                viz.play(traj.pos, dt)
+                continue
+        else:
+            try:
+                userTraj = int(userTraj)
+            except ValueError:
+                print("not valid input")
+                continue
+            if userTraj not in trajectories:
+                print("not valid input")
+                continue
+        traj = trajectories[userTraj]
+        if prevChoice == 0 or arm_ids[userTraj] != arm_ids[prevChoice]:
+            if arm_ids[userTraj] == armFile:
+                playArm = arm
+            else:
+                playArm = illusoryArm
+            viz = initViz(playArm)
+        viz.play(traj.pos, dt)
+        prevChoice = userTraj
 
 main()

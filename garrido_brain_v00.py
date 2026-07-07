@@ -5,6 +5,7 @@ class cerebellum:
     def __init__(self, n_dof=2):
         self.currPF = 0
         self.nPFs = 500
+        self.pfIdx = 0
         self.nMuscles = n_dof*2 # one pair agonist-antagonist per joint
         self.purAct = np.zeros(self.nMuscles)
         self.pcLookup = np.zeros(self.nPFs) 
@@ -25,24 +26,23 @@ class cerebellum:
         inputs to the parallel fibers,
         which act as a state machine (discritizing the motion)
         '''
-        self.currPF += 1
-        if self.currPF > self.nPFs:
-            raise BrainError("More timesteps then parallel fibers")
+        self.pfIdx = self.currPF
+        self.currPF = (self.currPF+1) % self.nPFs
 
     def updatePF_PC(self, error):
         '''
         updates the synaptic weights between the parallel fibers
         and the purkinje cell
         '''
-        self.pf_pc_weights[self.currPF-1,:] += (self.LTP_max / ((error+1)**self.alpha)) - self.LTD_max*error
-        self.pf_pc_weights[self.currPF-1,:] = np.clip(self.pf_pc_weights[self.currPF-1,:], 0, 1)
+        self.pf_pc_weights[self.pfIdx,:] += (self.LTP_max / ((error+1)**self.alpha)) - self.LTD_max*error
+        self.pf_pc_weights[self.pfIdx,:] = np.clip(self.pf_pc_weights[self.pfIdx,:], 0, 1)
 
     def purkinjeCompute(self, motorError):
         '''
         computes the purkinje cell firing rate [0 - 1]
         '''
         self.updatePF_PC(motorError)
-        self.purAct = self.pf_pc_weights[self.currPF-1, :].copy() 
+        self.purAct = self.pf_pc_weights[self.currPF, :].copy() 
         self.purAct = np.clip(self.purAct, 0, 1)
 
     def updateMF_DCN(self):
@@ -59,7 +59,7 @@ class cerebellum:
         and the deep cerebellar nuclei
         '''
         dcn_clipped = np.clip(self.dcnAct, 0, 1)
-        self.pc_dcn_weights += ((self.LTP_max_dcn * self.purAct**self.alpha) / ((dcn_clipped + 1)**self.alpha)) - self.LTD_max_dcn*(1-self.purAct)
+        self.pc_dcn_weights += ((self.LTP_max_dcn * self.purAct**self.alpha) * (1 - 1/(dcn_clipped + 1)**self.alpha)) - self.LTD_max_dcn*(1-self.purAct)
         self.pc_dcn_weights = np.clip(self.pc_dcn_weights, 0, None) 
 
     def DCNCompute(self):
@@ -67,9 +67,10 @@ class cerebellum:
         computes the deep cerebellar nuclei's activation,
         which is the torque outputs (for each muscle)
         '''
+        self.dcnAct = self.mf_dcn_weights - self.purAct*self.pc_dcn_weights 
+        self.dcnAct = np.clip(self.dcnAct, 0, None)
         self.updateMF_DCN()
         self.updatePC_DCN()
-        self.dcnAct = self.mf_dcn_weights - self.purAct*self.pc_dcn_weights 
 
     def dcnToTorque(self):
         '''
@@ -90,18 +91,12 @@ class cerebellum:
         posCon = [2, 2, 2]
         velCon = [1, 1, 1]
         error = posCon*qError + velCon*qdError 
+        error = np.tanh(error)
         agonist = np.maximum(error, 0)
         antagonist = np.maximum(-error, 0)
         error = np.stack([agonist, antagonist], axis=1).reshape(-1)  # (n_muscles,)
-        error = np.tanh(error) # clips errors to 0 - 1 BUT I DONT LIKE IT
+        #error = np.tanh(error) # clips errors to 0 - 1 BUT I DONT LIKE IT
         # for agonist / antagonist pairs
         self.purkinjeCompute(error)
         self.DCNCompute()
         return self.dcnToTorque()
-    
-    def resetTraj(self):
-        '''
-        sets the parallel fibers back to initial 
-        state
-        '''
-        self.currPF = 0
