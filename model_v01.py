@@ -167,6 +167,35 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
     axs[pltN].grid(True)
     plt.show()
 
+def plot_brain_results(errorTot, errDistNoBrain, PCact, time, mf_dcn, pc_dcn):
+    fig, axs = plt.subplots(2, 2, figsize=(12, 12))
+    pltN = 0
+    axs[pltN, 0].plot(errorTot)
+    axs[pltN, 0].set_xlabel("Trial")
+    axs[pltN, 0].set_ylabel("Total Mean Distance Error")
+    axs[pltN, 0].set_title("1.5kg Mass")
+    axs[pltN, 0].axhline(np.sum(errDistNoBrain), color='r', linestyle='--', linewidth=2)
+    axs[pltN, 0].legend(["Brain Erorr", "No Brain Error"])
+
+    pltN += 1
+    axs[pltN, 0].plot(time, PCact[:, 1:3])
+    axs[pltN, 0].set_xlabel("Time (s)")
+    axs[pltN, 0].set_ylabel("PC Activation")
+    axs[pltN, 0].set_title("Purkinje Cell Activation (Joint 2)")
+    axs[pltN, 0].legend(["Joint 2 Agonist", "Joint 2 Antagonist"])
+
+    pltN = 0
+    axs[pltN, 1].plot(mf_dcn[:, 3])
+    axs[pltN, 1].set_xlabel("Trial")
+    axs[pltN, 1].set_ylabel("Weight")
+    axs[pltN, 1].set_title("MF_DCN Weight Joint 2 Agonist")
+
+    pltN += 1
+    axs[pltN, 1].plot(pc_dcn[:, 3])
+    axs[pltN, 1].set_xlabel("Trial")
+    axs[pltN, 1].set_ylabel("Weight")
+    axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Agonist")
+    plt.show()
 
 def makeJointData(arm, trajectory, t):
     '''
@@ -286,16 +315,21 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
     torrPd = np.zeros_like(currPos)
     nTrials = 1500
     errorTot = np.zeros(nTrials)
+    mf_dcn = np.zeros((nTrials, arm.njoints*2))
+    pc_dcn = np.zeros_like(mf_dcn)
     # PD Constants
     kp = np.ones(arm.njoints)*20
     kd = 2*np.sqrt(kp)
+    PCact = np.zeros((len(time), arm.njoints*2))
+    state = 0
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
             qError  = angle_diff(traj_w_error.pos[i], currPos)
             qdError = traj_w_error.vel[i] - currVel
             # compute corrections
-            corrTorque = brain.compute(qError, qdError)
+            state = int(np.floor(i * brain.nPFs / len(time)))
+            corrTorque = brain.compute(qError, qdError, state)
             torrPd = kp*(qError) + kd*(qdError)
 
             # move the arm
@@ -307,18 +341,22 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
             arm.move(currPos, currVel, currAcc)
             final_traj.torq[i] = torque + corrTorque + torrPd # stores for plot
 
-            # store results
-            final_traj.pos[i,:]   = currPos
-            final_traj.vel[i,:]   = currVel
-            final_traj.acel[i,:]  = currAcc
             final_traj.eePos[i,:] = arm.getPos()
+            if trial == nTrials-1:
+                # store results
+                final_traj.pos[i,:]   = currPos
+                final_traj.vel[i,:]   = currVel
+                final_traj.acel[i,:]  = currAcc
+                PCact[i,:] = brain.getPC()
         # reset between each trial
         errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)])
         currPos       = traj_w_error.pos[0,:] 
         currVel       = np.zeros_like(currPos)
         currAcc       = np.zeros_like(currPos)
+        mf_dcn[trial, :] = brain.getMF_DCN()
+        pc_dcn[trial, :] = brain.getPC_DCN()
         arm.move(currPos, currVel, currAcc)
-    return final_traj, errorTot
+    return final_traj, errorTot, PCact, mf_dcn, pc_dcn
 
 
 ###################################
@@ -329,8 +367,8 @@ def main():
 
     # hardcoded for easy changing CURRENTLY
     fname      = "traj_006.csv" 
-    armFile    = "arm_3dofIllusoryMassBigger.urdf" 
-    illFile    = "arm_3dofIllusion.urdf" 
+    armFile    = "arm_3dofIllusoryMassBig.urdf" 
+    illFile    = "arm_3dof.urdf" 
     n_dof      = 3 
 
     # load end effector trajectory
@@ -358,7 +396,7 @@ def main():
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain)
+    final_traj, errorTot, pc, mfdcn, pcdcn = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain)
 
     # forward dynamics on the no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
@@ -371,20 +409,13 @@ def main():
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]
     errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)]
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  cntrl_traj.eePos)]
-    print(f"total distance error: {np.sum(errDistBrain)}")
+    print(f"average distance error: {np.sum(errDistBrain)/len(time)}")
 
     # plotting arm data
     plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
                  errDistNoBrain, errDistBrain, n_dof)
     # plotting brain data
-    plt.plot(errorTot)
-    plt.xlabel("Trial")
-    plt.ylabel("Total Mean Distance Error")
-    plt.title("10kg Mass")
-    plt.axhline(np.sum(errDistNoBrain), color='r', linestyle='--', linewidth=2)
-    plt.legend(["Brain Erorr", "No Brain Error"])
-    plt.show()
-
+    plot_brain_results(errorTot, errDistNoBrain, pc, time, mfdcn, pcdcn)
     # saving trajectories
     trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
     arm_ids = {1: armFile, 2: armFile, 3: armFile, 4: illFile}  # swap in your actual arm identifiers

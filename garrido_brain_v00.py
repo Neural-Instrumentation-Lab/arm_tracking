@@ -20,14 +20,16 @@ class cerebellum:
         self.LTD_max_dcn = 1e-4 # long-term depression 
         self.alpha = 1000 # LTP decay factor
 
-    def granuleLayer(self):
+    def granuleLayer(self, state):
         '''
         The granular layer translates the 
         inputs to the parallel fibers,
         which act as a state machine (discritizing the motion)
         '''
-        self.pfIdx = self.currPF
-        self.currPF = (self.currPF+1) % self.nPFs
+        self.pfIdx = state - 1
+        self.currPF = state 
+        if state >= self.nPFs:
+            raise BrainError("state is greater than the number of PFs")
 
     def updatePF_PC(self, error):
         '''
@@ -45,6 +47,9 @@ class cerebellum:
         self.purAct = self.pf_pc_weights[self.currPF, :].copy() 
         self.purAct = np.clip(self.purAct, 0, 1)
 
+    def getPC(self):
+        return self.purAct
+
     def updateMF_DCN(self):
         '''
         updates the synaptic weights between the mossy fibers and the 
@@ -52,6 +57,12 @@ class cerebellum:
         '''
         self.mf_dcn_weights += (self.LTP_max_dcn / ((self.purAct + 1)**self.alpha)) - self.LTD_max_dcn*self.purAct
         self.mf_dcn_weights = np.clip(self.mf_dcn_weights, 0, None) 
+
+    def getMF_DCN(self):
+        return(self.mf_dcn_weights)
+
+    def getPC_DCN(self):
+        return(self.pc_dcn_weights)
 
     def updatePC_DCN(self):
         '''
@@ -82,12 +93,12 @@ class cerebellum:
         corr = (corr).reshape(-1, 2).sum(axis=1) 
         return corr
     
-    def compute(self, qError, qdError):
+    def compute(self, qError, qdError, state):
         '''
         updates the entire brain given the error signals
         '''
         # combine errors
-        self.granuleLayer()
+        self.granuleLayer(state)
         posCon = [2, 2, 2]
         velCon = [1, 1, 1]
         error = posCon*qError + velCon*qdError 

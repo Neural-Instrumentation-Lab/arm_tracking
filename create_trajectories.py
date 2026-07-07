@@ -191,7 +191,7 @@ def create_traj_006():
     it is a 8-figure trajectory but not the one in 
     figure 5A in their 2013 paper
     '''
-    fs = 500
+    fs = 1500
     t = np.arange(0, 1, 1/fs)
     y = 0.1 * np.sin(2*np.pi * t)+0.21502
     z = 0.1 * np.sin(4 * np.pi * t)+0.18502
@@ -206,29 +206,25 @@ def create_traj_006():
     fname = 'trajectories/traj_006.csv'
     save_data(fname,array)
 
-    # f = 2
-    # fs = 500
-    # t = np.arange(0, 1, 1/fs)
-    # q1 = 0.1*np.sin(f*np.pi*t)
-    # q2 = 0.1*np.sin(f*np.pi*t + np.pi/4)
-    # q3 = 0.1*np.sin(f*np.pi*t + np.pi/2)
-    
-    # # because of floating point error some of these positions on the boundary of the 
-    # # reachability will be unreachable, so we have to go and check this positions
-    # # to see if valid
-    # arm   = dynamic_3dof_arm("models/arm_3dof.urdf", disp=False) 
-    # fixed_pos = np.zeros((fs, 3))
-    # for i in range(fs):
-    #     pos = np.array(q1[i], q2[i], q3[i])
-    #     coord = arm.getEEFromJoint(np.array(pos))
-    #     coord = clip_to_reachable(pos, arm.lengths)
-    #     arm.getJointPosFromEE(coord)
-    #     fixed_pos[i, :] = coord
-    # data = np.concat([t.reshape(-1, 1), fixed_pos], axis=1)
-    # fname = 'trajectories/traj_006.csv'
-    # save_data(fname, data) 
-        
-        
+def create_traj_007():
+    '''
+    traj 6 but with lower fs 
+    '''
+    fs = 500
+    t = np.arange(0, 1, 1/fs)
+    y = 0.1 * np.sin(2*np.pi * t)+0.21502
+    z = 0.1 * np.sin(4 * np.pi * t)+0.18502
+    x = np.ones(len(t)) * 0.5
+    dx = np.zeros_like(t)
+    dy = 0.1*2*np.pi*np.cos(2*np.pi*t)
+    dz = 0.1*4*np.pi*np.cos(4*np.pi*t)
+    ddx = np.zeros_like(t)
+    ddy = -0.1*4*np.pi*np.pi*np.sin(2*np.pi*t)
+    ddz = -0.1*16*np.pi*np.pi*np.sin(4*np.pi*t)
+    array = np.array([t,x,y,z,dx,dy,dz,ddx,ddy,ddz]).T
+    fname = 'trajectories/traj_007.csv'
+    save_data(fname,array)
+
 ## MAIN ###################################################################
 
 ###################################
@@ -270,6 +266,7 @@ def main():
     elif args.trajectory_id == '4': create_traj_004()
     elif args.trajectory_id == '5': create_traj_005()
     elif args.trajectory_id == '6': create_traj_006()
+    elif args.trajectory_id == '7': create_traj_007()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")
