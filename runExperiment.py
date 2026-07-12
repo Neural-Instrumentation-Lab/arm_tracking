@@ -55,6 +55,11 @@ def main() -> None:
         "--no_grav", action="store_true",
         help="Turns gravity off for the experiment"
     )
+    parser.add_argument(
+        "--save_weights",
+        help="Location to save the resulting weights"
+    )
+
 
     args = parser.parse_args()
 
@@ -75,12 +80,13 @@ def main() -> None:
         print(f"  trajectory: {exp.trajectory}")
         print(f"  actualArm:      {exp.actualArm}")
         print(f"  illusoryArm:      {exp.illusoryArm}")
-        print(f"  results:      {exp.results}\n")
-        print(f"  nDof:      {exp.nDof}")
+        print(f"  results:      {exp.results}")
+        print(f"  initWts:      {exp.initialWts}")
+        print(f"  nDof:      {exp.nDof}\n")
         return
 
     if not args.view:
-        model_v01.simulate(exp, args.save, not args.hide_output, not args.no_grav)
+        model_v01.simulate(exp, args.save, not args.hide_output, not args.no_grav, args.save_weights)
     else:
         try:
             play_arm_path.play_traj(exp)

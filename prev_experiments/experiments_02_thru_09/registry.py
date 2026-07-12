@@ -5,9 +5,9 @@ from experiment import Experiment
 # This replaces the "type 3 for experiment 3" problem: every experiment has
 # a memorable name and a description right next to its file paths.
 
-ARMS = Path("experiments/experiments_02_thru_09/models")
-TRAJS = Path("experiments/experiments_02_thru_09/trajectories")
-RESUL = Path("experiments/experiments_02_thru_09/results/arm_paths")
+ARMS = Path("prev_experiments/experiments_02_thru_09/models")
+TRAJS = Path("prev_experiments/experiments_02_thru_09/trajectories")
+RESUL = Path("prev_experiments/experiments_02_thru_09/results/arm_paths")
 
 EXPERIMENTS: dict[str, Experiment] = {
     e.name: e

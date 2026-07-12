@@ -14,6 +14,7 @@ class cerebellum:
         self.mf_dcn_weights = np.zeros(self.nMuscles)
         self.pc_dcn_weights = np.zeros(self.nMuscles)
         self.dcnAct = np.zeros(self.nMuscles)
+        self.pf_pc_only = False 
         # from garrido paper
         self.LTP_max = 0.01 # long-term potentiation
         self.LTD_max = 0.02 # long-term depression 
@@ -74,6 +75,9 @@ class cerebellum:
     def getnPFs(self):
         return(self.nPFs)
 
+    def set_pf_pc_only(self, val):
+        self.pf_pc_only = val
+
     def updatePC_DCN(self):
         '''
         updates the weights between the purkinje cell
@@ -124,7 +128,12 @@ class cerebellum:
         # for agonist / antagonist pairs
         self.updatePF_PC(error)
         self.purkinjeCompute()
-        self.updateMF_DCN()
-        self.updatePC_DCN()
+        if not self.pf_pc_only:
+            self.updateMF_DCN()
+            self.updatePC_DCN()
         self.DCNCompute()
         return self.dcnToTorque()
+
+    def loadWts(self, init_mf_dcn, init_pc_dcn):
+        self.mf_dcn_weights = init_mf_dcn
+        self.pc_dcn_weights = init_pc_dcn

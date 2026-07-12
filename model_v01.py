@@ -333,7 +333,7 @@ def playVideo(time, trajectories, arm_ids, arm, illusoryArm):
         prevChoice = userTraj
 
 ###################################
-def simulate(exp, save, showOutput, grav):
+def simulate(exp, save, showOutput, grav, saveWts):
 ###################################
     """
     Args:
@@ -346,7 +346,6 @@ def simulate(exp, save, showOutput, grav):
     armFile    = exp.actualArm
     illFile    = exp.illusoryArm 
     n_dof      = exp.nDof 
-
     # instantiate limb, motor control unit, brain    
     if n_dof == 2:
         arm         = dynamic_2dof_arm(armFile, disp=showOutput) 
@@ -380,6 +379,15 @@ def simulate(exp, save, showOutput, grav):
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
+    if exp.initialWts is None:
+        brain.set_pf_pc_only(False)
+    else:
+        brain.set_pf_pc_only(True)
+        with open(exp.initialWts) as wtsFile:
+            weights = np.loadtxt(wtsFile, delimiter=',', dtype=float, skiprows=1)
+        brain.loadWts(weights[:6], weights[6:])
+
+
     final_traj, errorTot, brainResults = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
     # no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
@@ -389,6 +397,11 @@ def simulate(exp, save, showOutput, grav):
     arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: illFile}
     if save:
        save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
+    # saving brain weights
+    if saveWts is not None:
+        headerRow = [g(y) for y in ["mf_dcn_j"+str(x+1) for x in range(n_dof)]+["pc_dcn_j"+str(x+1) for x in range(n_dof)] for g in (lambda y: y+"_a", lambda y: y+"_aa")]
+        with open(saveWts, "w") as fp:
+            np.savetxt(fp.name, np.concat([brainResults.mf_dcn[-1,:], brainResults.pc_dcn[-1,:]], axis=0).reshape(1, -1), delimiter=',', fmt="%0.5f", header=",".join(headerRow), comments="") 
 
     if not showOutput:
         print("Simulation Complete...")

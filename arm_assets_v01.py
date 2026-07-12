@@ -40,94 +40,6 @@ def costHelper(q, prevQ):
     ])
     return np.linalg.norm(d)
 
-## Simple 2 DoF Motor Controller ###############################################
-class simplest_2dof_controller:
-    '''
-    Control unit - converts desired reach locations into joint angles
-        Written as a class for implementation simplicty
-    '''
-    ###################################
-    def __init__(self,L1=None,L2=None):
-    ###################################
-        '''Constructor - load in values for L1,L2 or use defaults'''
-        self.len_1,self.len_2 = [10,5] if not L1 else [L1,L2]
-
-    ###################################
-    def is_valid_location(self,pos):
-    ###################################
-        '''Determines whether location <pos> can be reached by the arm
-        
-        Args:
-            pos (array of 2 elements)   desired arm location in 2D
-        Returns:
-            valid (boolean)             True if <pos> can be reached by the arm
-        '''
-
-        # define local copies for notational simplicity
-        x,y   = pos[0] , pos[1]
-        L1,L2 = self.len_1 , self.len_2
-
-        # return true if pos can be physically reached
-        return np.abs(L1-L2) < np.sqrt(x**2 + y**2) < (L1+L2)
-
-    ###################################
-    def get_joint_angles(self,pos):
-    ###################################
-        '''Given a desired position in x-y space, return the corresponding arm angles.
-            Note that desired position must be greater than L1-L2 and less than L1+L2
-
-            Args:
-                pos (array of 2 elements)   desired arm location in 2D
-            Returns:
-                [th1,th2]                   corresponding joint angles in radians
-        '''
-
-        # define local copies for notational simplicity
-        x,y   = pos[0] , pos[1]
-        L1,L2 = self.len_1 , self.len_2
-
-        # if <pos> cannot be physically reached by the arm, raise a Joint Angle Error and exit
-        if not self.is_valid_location(pos):
-            raise JointAngleError("Trying to reach to an unreachable location")
-
-        #  Compute the values for th1 and th2
-        th2 = arccos( ( (x**2+y**2) - (L1**2+L2**2) ) / (2*L1*L2) )       
-        th1 = arccos( ( (L1+L2*cos(th2))*x + L2*sin(th2)*y ) / (x**2+y**2) )
-
-        #  return th1, th2
-        return np.array([th1,th2])
-
-## Simple 2 DoF Limb ###########################################################
-class simplest_2dof_limb:
-    '''
-    Model of a physical 2DOF arm. No dynamics, just kinematics
-        Basically just a single function but written as a class for simplicity of implementation
-    '''
-
-    ###################################
-    def __init__(self,L1=None,L2=None):
-    ###################################
-        '''Constructor - load in values for L1,L2 or use defaults'''
-        self.len_1,self.len_2 = [10,5] if not L1 else [L1,L2]
-
-    ###################################
-    def move(self,joint_angles):
-    ###################################
-        ''' Determine x-y locations for the arm given the joint angles
-            
-            Args:
-                joint_nagles (array of 2 elements)  arm joint angles
-            Returns:
-                [x,y]                               arm location
-        '''
-
-        # compute x-y locations
-        x = self.len_1*np.cos(joint_angles[0]) + self.len_2*np.cos(joint_angles[0] + joint_angles[1])
-        y = self.len_1*np.sin(joint_angles[0]) + self.len_2*np.sin(joint_angles[0] + joint_angles[1])
-
-        # return x-y locations
-        return np.array([x,y])
-
 class dynamic_3dof_arm:
     '''
     3dof arm with pinocchio; rigid body sim library
@@ -257,45 +169,41 @@ class dynamic_3dof_arm:
         return not (D > L2 + L3 or D < np.abs(L2-L3))
 
     def getJointPosFromEE(self, pos, prevQ=np.array([0, 0, 0])):
+        '''
+        Inverse Kinematics for a 3dof arm
+        if arm is more complex then this needs to be iterative
+        and not analytical
+        '''
         x, y, z = pos
         L1, L2, L3 = self.lengths
-
         if not self.is_valid_location(pos):
             raise JointAngleError(f"Cannot reach this position: {pos}")
         D = np.linalg.norm([x, y, z-L1])
-    
         rho = np.hypot(x, y)
         h = z - L1
-
         r2 = rho**2 + h**2
-
         c3 = (r2 - L2**2 - L3**2) / (2 * L2 * L3)
         c3 = np.clip(c3, -1.0, 1.0)
-
         q3a = np.arccos(c3)      # elbow-up
         q3b = -np.arccos(c3)   # elbow-down
-
         if rho < 1e-6:
             q1 = prevQ[0]
         else:
             q1 = np.atan2(y, x)
-
         q2a = np.atan2(h, rho) - np.atan2(
             L3 * np.sin(q3a),
             L2 + L3 * np.cos(q3a)
         )
-
         q2b = np.atan2(h, rho) - np.atan2(
             L3 * np.sin(q3b),
             L2 + L3 * np.cos(q3b)
         )
+        # this arm has 4 solutions for any given position
         sola = [q1, np.pi/2 - q2a, -q3a]
         solb = [q1, np.pi/2 - q2b, -q3b]
         solc = [q1+np.pi, -(np.pi/2 - q2b), q3b]
         sold = [q1-np.pi, -(np.pi/2 - q2a), q3a]
-
         sol = min([sola, solb, solc, sold], key=lambda q: costHelper(q, prevQ))
-
         return np.array(sol)
 
     def forwardDynamics(self, positions, velocities, torques, time):
@@ -304,16 +212,13 @@ class dynamic_3dof_arm:
        '''
         currPos = positions[0]     
         currVel = velocities[0] 
-
         cntrl_traj = armTraj(pos=np.zeros((len(torques), self.njoints)),
                             torq=np.zeros((len(torques), self.njoints)),
                             eePos=np.zeros((len(torques), 3)))
-
         currAcc = self.forward(currPos, currVel, torques[0])
         self.move(currPos, currVel, currAcc)
         torrPd        = np.zeros_like(currPos)
-
-        kp = np.ones(self.njoints)*10
+        kp = np.ones(self.njoints)*20
         kd = 2*np.sqrt(kp)
         for i, tau in enumerate(torques):
             torrPd = kp*angle_diff(positions[i], currPos) + kd*(velocities[i] - currVel)
@@ -327,7 +232,6 @@ class dynamic_3dof_arm:
             cntrl_traj.pos[i, :]   = currPos
             cntrl_traj.torq[i, :]  = torque 
             cntrl_traj.eePos[i, :] = self.getPos()
-
         return cntrl_traj
 
     def inverseDynamics(self, positions, velocities, accels, time, n_substeps=100):
@@ -348,8 +252,8 @@ class dynamic_3dof_arm:
         torques   = np.zeros_like(positions)
         torquesPD = np.zeros_like(torques)
         eePos     = np.zeros((len(positions), 3))
-        kp        = np.ones(self.njoints) * 10 # found empirically, these seem ok
-        kd        = 2*np.sqrt(kp) # this is the best the ratio for a reason
+        kp        = np.ones(self.njoints) * 20 
+        kd        = 2*np.sqrt(kp) 
         pos       = positions[0]  
         vel       = velocities[0] 
         acc       = accels[0]

@@ -77,7 +77,7 @@ def main() -> None:
         print(f"[{i}/{len(to_run)}] {exp.name} ... ", end="", flush=True)
         start = time.time()
         try:
-            model_v01.simulate(exp, save, args.show_output, grav=True)
+            model_v01.simulate(exp, save, args.show_output, True, False)
             elapsed = time.time() - start
             results.append((exp.name, True, elapsed, None))
             print(f"ok ({elapsed:.1f}s)")

@@ -25,7 +25,7 @@ inline Eigen::VectorXd angle_diff(const Eigen::VectorXd& a, const Eigen::VectorX
 class Cerebellum {
 public:
     explicit Cerebellum(int n_dof = 2)
-        : currPF(0), nPFs(500), pfIdx(0), nMuscles(n_dof * 2) {
+        : currPF(0), nPFs(500), pfIdx(0), nMuscles(n_dof * 2), pf_pc_only(true){
         purAct          = Eigen::VectorXd::Zero(nMuscles);
         pf_pc_weights   = Eigen::MatrixXd::Zero(nPFs, nMuscles);
         mf_dcn_weights  = Eigen::VectorXd::Zero(nMuscles);
@@ -56,6 +56,7 @@ public:
     Eigen::VectorXd getPC() const  { return purAct; }
     Eigen::VectorXd getDCN() const { return dcnAct; }
     int getnPFs() const { return nPFs; }
+    void set_pf_pc_only(bool val) { pf_pc_only = val;}
 
     void updateMF_DCN() {
         Eigen::ArrayXd pa = purAct.array();
@@ -90,6 +91,11 @@ public:
         return out;
     }
 
+    void loadWts(const Eigen::VectorXd& init_mf_dcn, const Eigen::VectorXd& init_pc_dcn){
+        mf_dcn_weights = init_mf_dcn;
+        pc_dcn_weights = init_pc_dcn;
+    }
+
     Eigen::VectorXd compute(const Eigen::VectorXd& qError, const Eigen::VectorXd& qdError, int state) {
         if (state == 0) {
             currPF = 0;
@@ -119,8 +125,10 @@ public:
 
         updatePF_PC(error);
         purkinjeCompute();
-        updateMF_DCN();
-        updatePC_DCN();
+        if (!pf_pc_only){
+            updateMF_DCN();
+            updatePC_DCN();
+        }
         DCNCompute();
         return dcnToTorque();
     }
@@ -129,6 +137,7 @@ public:
     int nPFs;
     int pfIdx;
     int nMuscles;
+    bool pf_pc_only;
 
 private:
     Eigen::VectorXd purAct;

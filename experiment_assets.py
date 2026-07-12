@@ -13,7 +13,8 @@ class Experiment:
     trajectory: Path         # the 1 trajectory file
     actualArm: Path          # the 2 arm files
     illusoryArm: Path
-    results: Path # where .pkl of results is stored
+    results: Path            # where .pkl of arm trajectories is stored
+    initialWts: Path         # where initial weights of brain are stored
     nDof : int # how many degrees of freedom arm has
     nTrials : int # how many times the traj is repeated
 
@@ -27,6 +28,8 @@ class Experiment:
         ]:
             if not path.exists():
                 problems.append(f"{label} file not found: {path}")
+        if self.initialWts is not None and not self.initialWts.exists():
+            problems.append(f"initialWts file not found: {self.initialWts}")
         return problems
 
 """
