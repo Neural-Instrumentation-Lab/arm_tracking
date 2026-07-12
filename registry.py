@@ -20,6 +20,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             illusoryArm=ARMS / "arm_3dof.urdf",
             results=RESUL / "cntrl_exp.pkl",
             nDof=3,
+            nTrials=1500,
         ),
         Experiment(
             name="diff_traj",
@@ -29,6 +30,17 @@ EXPERIMENTS: dict[str, Experiment] = {
             illusoryArm=ARMS / "arm_3dof.urdf",
             results=RESUL / "diff_traj.pkl",
             nDof=3,
+            nTrials=1500,
+        ),
+        Experiment(
+            name="test",
+            description="test, only simulates one trial",
+            trajectory=TRAJS / "traj_009.csv",
+            actualArm=ARMS / "arm_3dofLargeMass.urdf",
+            illusoryArm=ARMS / "arm_3dof.urdf",
+            results=RESUL / "test.pkl",
+            nDof=3,
+            nTrials=1,
         ),
     ]
 }

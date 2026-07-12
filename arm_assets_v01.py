@@ -372,6 +372,45 @@ class dynamic_3dof_arm:
             torques[i, :] = self.inverse(pos, vel, acc)
         return torques
 
+    def makeJointData(self, positions, velocities, accelerations):
+        '''
+        constructs joint positions, velocities, and accelerations
+        for a given trajectory of the end-effector.
+        calculates angular vel and acceleration thru joint Jacobian
+        instead of derivative to reduce error thru derivation
+
+        Args:
+            arm: arm class.
+            trajectory: positions (x,y,z) in 3d space of the end effector.
+            t: time vector corresponding to the trajectory.
+        Returns:
+            joints: joint positions 
+            velocity: joint angular velocities
+            acceleration: joint angular accelerations 
+        '''
+        joint_pos = np.zeros((len(positions), self.njoints))
+        joint_vels = np.zeros_like(joint_pos)
+        joint_accs = np.zeros_like(joint_pos)
+        q   = np.zeros(self.njoints)
+        qd  = np.zeros(self.njoints)
+        qdd = np.zeros(self.njoints)
+        for i, coord in enumerate(positions):
+            if i > 0:
+                q = self.getJointPosFromEE(coord, joint_pos[i-1,:])
+            else:
+                q = self.getJointPosFromEE(coord)
+            joint_pos[i, :] = q
+            pin.forwardKinematics(self.model, self.data, q, qd)
+            pin.computeJointJacobians(self.model, self.data, q)
+            pin.computeJointJacobiansTimeVariation(self.model, self.data, q, qd)
+            J    = pin.getFrameJacobian(self.model, self.data, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
+            Jdot = pin.getFrameJacobianTimeVariation(self.model, self.data, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
+            qd = np.linalg.pinv(J) @ velocities[i, :] 
+            qdd = np.linalg.pinv(J) @ (accelerations[i,:] - Jdot @ velocities[i,:])
+            joint_vels[i, :] = qd
+            joint_accs[i, :] = qdd
+        return joint_pos, joint_vels, joint_accs 
+
 
 class dynamic_2dof_arm(dynamic_3dof_arm):
     def is_valid_location(self, pos):

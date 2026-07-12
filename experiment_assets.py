@@ -15,6 +15,7 @@ class Experiment:
     illusoryArm: Path
     results: Path # where .pkl of results is stored
     nDof : int # how many degrees of freedom arm has
+    nTrials : int # how many times the traj is repeated
 
     def validate(self) -> list[str]:
         """Return a list of problems (missing files etc). Empty list = OK."""

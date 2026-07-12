@@ -8,9 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-tk \
     tk \
     libx11-6 \
+    make \
     libxext6 \
     libxrender1 \
     libgomp1 \
+    build-essential \
+    libeigen3-dev \
     git \
     openssh-client \
     g++ \

@@ -56,7 +56,6 @@ def main() -> None:
         help="Turns gravity off for the experiment"
     )
 
-
     args = parser.parse_args()
 
     if args.list or not args.experiment:

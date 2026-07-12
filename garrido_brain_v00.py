@@ -1,4 +1,5 @@
 import numpy as np
+
 class BrainError(Exception): pass
 
 class cerebellum:
@@ -50,6 +51,9 @@ class cerebellum:
     def getPC(self):
         return self.purAct
 
+    def getDCN(self):
+        return self.dcnAct
+
     def updateMF_DCN(self):
         '''
         updates the synaptic weights between the mossy fibers and the 
@@ -63,6 +67,12 @@ class cerebellum:
 
     def getPC_DCN(self):
         return(self.pc_dcn_weights)
+
+    def getPF_PC(self):
+        return(self.pf_pc_weights)
+
+    def getnPFs(self):
+        return(self.nPFs)
 
     def updatePC_DCN(self):
         '''
