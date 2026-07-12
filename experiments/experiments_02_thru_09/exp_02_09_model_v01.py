@@ -20,6 +20,7 @@ from exp_02_09_atrack_assets import simplest_2dof_limb, simplest_2dof_controller
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
+from experiment import Experiment
 
 matplotlib.use('TkAgg')
 
@@ -30,7 +31,7 @@ logging.basicConfig(
 )
 
 ###################################
-def get_trajectory(fname:str):
+def get_trajectory(eeTraj):
 ###################################
     ''' load desired end effector trajectory from csv file
     
@@ -44,15 +45,8 @@ def get_trajectory(fname:str):
         n_dim:  number of dimensions in trajectory
     '''
 
-    # append .csv to filename if not specified
-    if fname[-3:] != 'csv':
-        fname += '.csv'
-
-    # prepend directory name
-    fname = 'trajectories/' + fname
-
     # load data - time should always be in column 0
-    data = np.loadtxt(fname,delimiter=',',ndmin=2)
+    data = np.loadtxt(eeTraj,delimiter=',',ndmin=2)
 
     # parse columns
     t     = data[:,0]
@@ -61,37 +55,6 @@ def get_trajectory(fname:str):
 
     # exit gracefully
     return traj,t,n_dim
-
-###################################
-def parse_args():
-###################################
-    '''
-    Parses commandline arguments
-
-    Collects trajectory file name from commandline
-
-    Returns:
-        fname(string)
-    '''
-    # set up parser
-    parser = argparse.ArgumentParser()
-    parser.add_argument("experiment" , nargs='?', default='9', help='select experiment. See experiment.txt')
-    parser.add_argument("--save", help='saves the outputted trajectories.', action='store_true')
-    parser.add_argument("--show_outputs", help='when true, program outputs graphs and prompts for what traj to play.', action='store_false')
-
-    # parse args and extract filename
-    args  = parser.parse_args()
-    exp = args.experiment
-    try:
-        exp = int(exp)
-    except:
-        print("invalid argument")
-        sys.exit()
-    if exp > 9 or exp < 2:
-        print("experiment must be between 2-9")
-        sys.exit()
-
-    return exp, args.save, args.show_outputs
 
 ###################################
 def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain, nDof):
@@ -223,60 +186,24 @@ def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
 
 
 ###################################
-def main():
+def simulate(exp, save, showOutput):
 ###################################
 
-    # load user preferences from command line
-    traj_files      = {2 : "traj_004.csv",
-                        3 : "traj_004.csv",
-                        4 : "traj_004.csv",
-                        5 : "traj_005.csv",
-                        6 : "traj_003.csv",
-                        7 : "traj_004.csv",
-                        8 : "traj_004.csv",
-                        9 : "traj_004.csv"}
-    arm_files       = {2 : "arm_2dof.urdf",
-                        3 : "arm_2dof.urdf",
-                        4 : "arm_3dof.urdf",
-                        5 : "arm_2dof.urdf",
-                        6 : "arm_3dof.urdf",
-                        7 : "arm_2dof.urdf",
-                        8 : "arm_2dof.urdf",
-                        9 : "arm_3dof.urdf"}
-    illusion_files  = {2 : "arm_2dofBigIllusion.urdf",
-                        3 : "arm_2dofIllusoryLengths.urdf",
-                        4 : "arm_3dofIllusion.urdf",
-                        5 : "arm_2dofBigIllusion.urdf",
-                        6 : "arm_3dofIllusion.urdf",
-                        7 : "arm_2dofIllusoryMass.urdf",
-                        8 : "arm_2dofBigIllusoryMass.urdf",
-                        9 : "arm_3dofIllusoryMass.urdf"}
-    dof = {2 : 2,
-           3: 2,
-           4: 3,
-           5: 2,
-           6 : 3,
-           7 : 2,
-           8 : 2,
-           9 : 3}
-
-    experiment, save, showOutput = parse_args()
-
-    fname      = traj_files[experiment]
-    armFile    = arm_files[experiment]
-    illFile    = illusion_files[experiment]
-    n_dof      = dof[experiment]
+    fname      = exp.trajectory 
+    armFile    = exp.actualArm
+    illFile    = exp.illusoryArm
+    n_dof      = exp.nDof
 
     # load end effector trajectory
     desired_ee_pos, time, n_dim = get_trajectory(fname)   
 
     # instantiate limb, motor control unit, brain    
     if n_dof == 2:
-        arm         = dynamic_2dof_arm("models/"+armFile) 
-        illusoryArm = dynamic_2dof_arm("models/"+illFile) 
+        arm         = dynamic_2dof_arm(armFile, disp=showOutput) 
+        illusoryArm = dynamic_2dof_arm(illFile, disp=showOutput) 
     else:
-        arm         = dynamic_3dof_arm("models/"+armFile) 
-        illusoryArm = dynamic_3dof_arm("models/"+illFile) 
+        arm         = dynamic_3dof_arm(armFile, disp=showOutput) 
+        illusoryArm = dynamic_3dof_arm(illFile, disp=showOutput) 
 
     brain           = cerebellum_marr_albus(n_dims=arm.njoints)
 
@@ -355,18 +282,18 @@ def main():
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]
     errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)]
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  cntrl_traj.eePos)]
-    print(f"total distance error: {np.sum(errDistBrain)}")
 
     # saving trajectories
     trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
     arm_ids = {1: armFile, 2: armFile, 3: armFile, 4: illFile}  # swap in your actual arm identifiers
     if save:
-        save_trajectories(trajectories, arm_ids, time[1] - time[0])
+        save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
 
     # rest of program is showing outputs
     if not showOutput:
-        sys.exit()
+        return
 
+    print(f"total distance error: {np.sum(errDistBrain)}")
     # plotting 
     plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
                 errDistNoBrain, errDistBrain, n_dof)
@@ -406,5 +333,3 @@ def main():
             viz = initViz(playArm)
         viz.play(traj.pos, dt)
         prevChoice = userTraj
-
-main()

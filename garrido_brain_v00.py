@@ -26,10 +26,11 @@ class cerebellum:
         inputs to the parallel fibers,
         which act as a state machine (discritizing the motion)
         '''
-        self.pfIdx = state - 1
-        self.currPF = state 
-        if state >= self.nPFs:
-            raise BrainError("state is greater than the number of PFs")
+        self.pfIdx = (state - 1) % self.nPFs
+        self.currPF = (state) % self.nPFs 
+        #print(f"{self.pfIdx} {self.currPF}")
+        # if state >= self.nPFs:
+        #     raise BrainError("state is greater than the number of PFs")
 
     def updatePF_PC(self, error):
         '''
@@ -39,11 +40,10 @@ class cerebellum:
         self.pf_pc_weights[self.pfIdx,:] += (self.LTP_max / ((error+1)**self.alpha)) - self.LTD_max*error
         self.pf_pc_weights[self.pfIdx,:] = np.clip(self.pf_pc_weights[self.pfIdx,:], 0, 1)
 
-    def purkinjeCompute(self, motorError):
+    def purkinjeCompute(self):
         '''
         computes the purkinje cell firing rate [0 - 1]
         '''
-        self.updatePF_PC(motorError)
         self.purAct = self.pf_pc_weights[self.currPF, :].copy() 
         self.purAct = np.clip(self.purAct, 0, 1)
 
@@ -80,8 +80,6 @@ class cerebellum:
         '''
         self.dcnAct = self.mf_dcn_weights - self.purAct*self.pc_dcn_weights 
         self.dcnAct = np.clip(self.dcnAct, 0, None)
-        self.updateMF_DCN()
-        self.updatePC_DCN()
 
     def dcnToTorque(self):
         '''
@@ -98,16 +96,25 @@ class cerebellum:
         updates the entire brain given the error signals
         '''
         # combine errors
+        if state == 0:
+            # no learning, just computation on first state
+            self.currPF = 0
+            self.purkinjeCompute()
+            self.DCNCompute()
+            return self.dcnToTorque()
         self.granuleLayer(state)
-        posCon = [2, 2, 2]
-        velCon = [1, 1, 1]
+        posCon = [1, 12, 6]
+        velCon = [2, 10, 5]
         error = posCon*qError + velCon*qdError 
-        error = np.tanh(error)
+        #error = np.tanh(error)
         agonist = np.maximum(error, 0)
         antagonist = np.maximum(-error, 0)
         error = np.stack([agonist, antagonist], axis=1).reshape(-1)  # (n_muscles,)
         #error = np.tanh(error) # clips errors to 0 - 1 BUT I DONT LIKE IT
         # for agonist / antagonist pairs
-        self.purkinjeCompute(error)
+        self.updatePF_PC(error)
+        self.purkinjeCompute()
+        self.updateMF_DCN()
+        self.updatePC_DCN()
         self.DCNCompute()
         return self.dcnToTorque()

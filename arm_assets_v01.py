@@ -250,13 +250,19 @@ class dynamic_3dof_arm:
         pin.updateFramePlacements(self.model, self.data)
         return self.getPos()
 
+    def is_valid_location(self, pos):
+        L1, L2, L3 = self.lengths
+        x, y, z = pos
+        D = np.linalg.norm([x, y, z-L1])
+        return not (D > L2 + L3 or D < np.abs(L2-L3))
+
     def getJointPosFromEE(self, pos, prevQ=np.array([0, 0, 0])):
         x, y, z = pos
         L1, L2, L3 = self.lengths
 
+        if not self.is_valid_location(pos):
+            raise JointAngleError(f"Cannot reach this position: {pos}")
         D = np.linalg.norm([x, y, z-L1])
-        if D > L2 + L3 or D < np.abs(L2-L3):
-            raise JointAngleError(f"Trying to reach to an unreachable location: {pos}")
     
         rho = np.hypot(x, y)
         h = z - L1
@@ -292,39 +298,31 @@ class dynamic_3dof_arm:
 
         return np.array(sol)
 
-    def forwardDynamics(self, positions, velocities, torques, starting_ee_pos, time, n_substeps=100):
+    def forwardDynamics(self, positions, velocities, torques, time):
         '''
-        Same as forwardDynamics, but integrates n_substeps inner steps
-        between each pair of trajectory samples instead of one big step
-        at the trajectory's native dt. Torque is held constant (zero-order
-        hold) across the inner steps of a given interval.
-        '''
-        currPos = positions[0]              # exact starting joint config (bug #1 fix)
-        currVel = np.zeros_like(currPos)
+        computes the necessary accelerations along a given trajectory
+       '''
+        currPos = positions[0]     
+        currVel = velocities[0] 
 
         cntrl_traj = armTraj(pos=np.zeros((len(torques), self.njoints)),
                             torq=np.zeros((len(torques), self.njoints)),
                             eePos=np.zeros((len(torques), 3)))
 
-        # record sample 0 as-is, no integration needed yet
         currAcc = self.forward(currPos, currVel, torques[0])
         self.move(currPos, currVel, currAcc)
-        cntrl_traj.pos[0, :]   = currPos
-        cntrl_traj.torq[0, :]  = torques[0]
-        cntrl_traj.eePos[0, :] = self.getPos()
         torrPd        = np.zeros_like(currPos)
 
-        kp = np.ones(self.njoints)*20
+        kp = np.ones(self.njoints)*10
         kd = 2*np.sqrt(kp)
-        for i in range(1, len(torques)):
-            dt     = time[i] - time[i-1]
+        for i, tau in enumerate(torques):
             torrPd = kp*angle_diff(positions[i], currPos) + kd*(velocities[i] - currVel)
-            torque = torques[i] + torrPd         
-
-            currAcc = self.forward(currPos, currVel, torque)
-            currVel = currVel + currAcc * dt
-            currPos = pin.integrate(self.model, currPos, currVel * dt)
-
+            torque = tau + torrPd         
+            if i > 0:
+                dt     = time[i] - time[i-1]
+                currAcc = self.forward(currPos, currVel, torque)
+                currVel = currVel + currAcc * dt
+                currPos = pin.integrate(self.model, currPos, currVel * dt)
             self.move(currPos, currVel, currAcc)
             cntrl_traj.pos[i, :]   = currPos
             cntrl_traj.torq[i, :]  = torque 
@@ -350,11 +348,11 @@ class dynamic_3dof_arm:
         torques   = np.zeros_like(positions)
         torquesPD = np.zeros_like(torques)
         eePos     = np.zeros((len(positions), 3))
-        kp        = np.ones(self.njoints) * 20 # found empirically, these seem ok
+        kp        = np.ones(self.njoints) * 10 # found empirically, these seem ok
         kd        = 2*np.sqrt(kp) # this is the best the ratio for a reason
         pos       = positions[0]  
-        vel       = np.zeros_like(pos)
-        acc       = np.zeros_like(pos)
+        vel       = velocities[0] 
+        acc       = accels[0]
         for i, (posCorr, velCorr, accCorr) in enumerate(zip(positions, velocities, accels)):
             torques[i, :]   = self.inverse(posCorr, velCorr, accCorr) # ideal torque
             torquesPD[i, :] = torques[i, :] + kp*angle_diff(posCorr, pos) + kd*(velCorr - vel)
@@ -364,10 +362,16 @@ class dynamic_3dof_arm:
                 acc = self.forward(pos, vel, torque)
                 vel = vel + acc * dt
                 pos = pin.integrate(self.model, pos, vel * dt)
-
             self.move(pos, vel, acc)
             eePos[i,:] = self.getPos()
         return torquesPD, eePos
+
+    def idealTorques(self, positions, velocities, accels):
+        torques   = np.zeros_like(positions)
+        for i, (pos, vel, acc) in enumerate(zip(positions, velocities, accels)):
+            torques[i, :] = self.inverse(pos, vel, acc)
+        return torques
+
 
 class dynamic_2dof_arm(dynamic_3dof_arm):
     def is_valid_location(self, pos):

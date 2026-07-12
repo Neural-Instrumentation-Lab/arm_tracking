@@ -22,6 +22,7 @@ from garrido_brain_v00 import cerebellum
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
+from experiment_assets import Experiment, Trajectory, load_trajectory
 
 matplotlib.use('TkAgg')
 
@@ -30,71 +31,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
     datefmt="%H:%M:%S"
 )
-
-###################################
-def get_trajectory(fname:str):
-###################################
-    ''' load desired end effector trajectory from csv file
-    
-    Parse filename, prepend directory name, load from csv, and parse into columns
-    
-    Args:
-        fname:  file name
-    Returns:
-        traj:   n_samples x n_dims trajectory data
-        t:      n_samples time data
-        n_dim:  number of dimensions in trajectory
-    '''
-
-    # append .csv to filename if not specified
-    if fname[-3:] != 'csv':
-        fname += '.csv'
-
-    # prepend directory name
-    fname = 'trajectories/' + fname
-
-    # load data - time should always be in column 0
-    data = np.loadtxt(fname,delimiter=',',ndmin=2)
-
-    # parse columns
-    t     = data[:,0]
-    traj  = data[:,1:]
-    n_dim = traj.shape[1]
-
-    return traj,t,n_dim
-
-###################################
-def parse_args():
-###################################
-    '''
-    Parses commandline arguments
-
-    Collects experiment number from command line 
-    and whether the user wants to save the traj data
-    CURRENTLY UNUSED
-
-    Returns:
-        experiment (int)
-        save (bool)
-    '''
-    # set up parser
-    parser = argparse.ArgumentParser()
-    parser.add_argument("experiment" , nargs='?', default='2', help='select experiment. See experiment.txt')
-    parser.add_argument("--save", help='saves the outputted trajectories.', action='store_true')
-
-    # parse args and extract filename
-    args  = parser.parse_args()
-    exp = args.experiment
-    try:
-        exp = int(exp)
-    except:
-        print("invalid argument")
-        sys.exit()
-    if exp > 9 or exp < 2:
-        print("experiment must be between 2-9")
-        sys.exit()
-
-    return exp, args.save
 
 ###################################
 def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, errDistNoBrain, errDistBrain, nDof):
@@ -142,9 +78,9 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
         pltN += 1
         axs[pltN].plot(time, traj_no_error.torq[:,2] - traj_w_error.torq[:,2], linewidth=2, linestyle='--')
         axs[pltN].plot(time, final_traj.torq[:,2] - traj_w_error.torq[:,2], linewidth=2)
-        axs[pltN].set_title("Joint 3 Torque")
+        axs[pltN].set_title("Joint 3 Corrective Torque")
         axs[pltN].set_ylabel("Torque")
-        axs[pltN].legend(["Ideal", "No Brain", "Brain"])
+        axs[pltN].legend(["Ideal", "Brain"])
         axs[pltN].grid(True)
 
     # plot total absolute mean torque error
@@ -170,11 +106,11 @@ def plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, 
 def plot_brain_results(errorTot, errDistNoBrain, PCact, time, mf_dcn, pc_dcn):
     fig, axs = plt.subplots(2, 2, figsize=(12, 12))
     pltN = 0
-    axs[pltN, 0].plot(errorTot)
+    axs[pltN, 0].plot(errorTot/len(time))
     axs[pltN, 0].set_xlabel("Trial")
-    axs[pltN, 0].set_ylabel("Total Mean Distance Error")
+    axs[pltN, 0].set_ylabel("Mean Absolute Error")
     axs[pltN, 0].set_title("1.5kg Mass")
-    axs[pltN, 0].axhline(np.sum(errDistNoBrain), color='r', linestyle='--', linewidth=2)
+    axs[pltN, 0].axhline(np.sum(errDistNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
     axs[pltN, 0].legend(["Brain Erorr", "No Brain Error"])
 
     pltN += 1
@@ -188,16 +124,33 @@ def plot_brain_results(errorTot, errDistNoBrain, PCact, time, mf_dcn, pc_dcn):
     axs[pltN, 1].plot(mf_dcn[:, 3])
     axs[pltN, 1].set_xlabel("Trial")
     axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("MF_DCN Weight Joint 2 Agonist")
+    axs[pltN, 1].set_title("MF_DCN Weight Joint 2 Antagonist")
 
     pltN += 1
     axs[pltN, 1].plot(pc_dcn[:, 3])
     axs[pltN, 1].set_xlabel("Trial")
     axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Agonist")
+    axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Antagonist")
     plt.show()
 
-def makeJointData(arm, trajectory, t):
+def getDerivatives(t, x, dx=None):
+    '''
+    creates the velocities and accelerations of 
+    the end-effector given positions (cartesian)
+
+    Args:
+        pos: end-effector coordinates
+        t: corresponding time vector
+    Returns:
+        armData: trajectory object containing the end effector
+                 data
+    '''
+    if dx is None:
+        dx = np.gradient(x, t, axis=0)
+    ddx = np.gradient(dx, t, axis=0)
+    return dx, ddx 
+
+def makeJointData(arm, positions, velocities, accelerations):
     '''
     constructs joint positions, velocities, and accelerations
     for a given trajectory of the end-effector.
@@ -213,33 +166,28 @@ def makeJointData(arm, trajectory, t):
         velocity: joint angular velocities
         acceleration: joint angular accelerations 
     '''
-    joints = np.zeros((len(trajectory.pos), arm.njoints))
-    vels = np.zeros_like(joints)
-    accs = np.zeros_like(joints)
-    v = np.zeros(3)
-    a = np.zeros(3)
-    for i, coord in enumerate(trajectory.pos):
+    joint_pos = np.zeros((len(positions), arm.njoints))
+    joint_vels = np.zeros_like(joint_pos)
+    joint_accs = np.zeros_like(joint_pos)
+    q   = np.zeros(arm.njoints)
+    qd  = np.zeros(arm.njoints)
+    qdd = np.zeros(arm.njoints)
+    for i, coord in enumerate(positions):
         if i > 0:
-            j = arm.getJointPosFromEE(coord, joints[i-1,:])
+            q = arm.getJointPosFromEE(coord, joint_pos[i-1,:])
         else:
-            j = arm.getJointPosFromEE(coord)
-        joints[i, :] = j
-
-        pin.forwardKinematics(arm.model, arm.data, j, v)
-        pin.computeJointJacobians(arm.model, arm.data, j)
-        pin.computeJointJacobiansTimeVariation(arm.model, arm.data, j, v)
+            q = arm.getJointPosFromEE(coord)
+        joint_pos[i, :] = q
+        pin.forwardKinematics(arm.model, arm.data, q, qd)
+        pin.computeJointJacobians(arm.model, arm.data, q)
+        pin.computeJointJacobiansTimeVariation(arm.model, arm.data, q, qd)
         J    = pin.getFrameJacobian(arm.model, arm.data, arm.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
         Jdot = pin.getFrameJacobianTimeVariation(arm.model, arm.data, arm.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
-        v = np.linalg.pinv(J) @ trajectory.vel[i, :] 
-        a = np.linalg.pinv(J) @ (trajectory.acel[i,:] - Jdot @ trajectory.vel[i,:])
-        vels[i, :] = v
-        accs[i, :] = a
-
-    #velocity = np.gradient(np.unwrap(joints, axis=0), t, axis=0)
-    #acceleration = np.gradient(velocity, t, axis=0)
-
-    armData = armTraj(joints, vels, accs)
-    return armData 
+        qd = np.linalg.pinv(J) @ velocities[i, :] 
+        qdd = np.linalg.pinv(J) @ (accelerations[i,:] - Jdot @ velocities[i,:])
+        joint_vels[i, :] = qd
+        joint_accs[i, :] = qdd
+    return joint_pos, joint_vels, joint_accs 
 
 def initViz(arm):
     '''
@@ -255,29 +203,11 @@ def initViz(arm):
     viz.loadViewerModel()
     return viz
 
-def makeEEData(pos, t):
-    '''
-    creates the velocities and accelerations of 
-    the end-effector given positions (cartesian)
-
-    Args:
-        pos: end-effector coordinates
-        t: corresponding time vector
-    Returns:
-        armData: trajectory object containing the end effector
-                 data
-    '''
-    velocity = np.gradient(pos, t, axis=0)
-    acceleration = np.gradient(velocity, t, axis=0)
-
-    armData = armTraj(pos, velocity, acceleration)
-    return armData 
-
 def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
     '''
     saves the travelled trajectories for further viewing
     without having to rerun the simulation
-    trajectories can be played with the experiments/play_arm_path.py
+    trajectories can be played by adding the --view argument to runExperiment.py 
     file.
     
     Args:
@@ -293,18 +223,28 @@ def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
     with open(filename, "wb") as f:
         pickle.dump(data, f)
 
-def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
+def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     '''
     Controls the arm with the cerebellar feedback loop
-
     Args:
+        arm: arm to move along the trajectory
+        traj_w_error: trajectory to move along in joint space (pos, vel, and torques)
+        desired_ee_traj: trajectory of EE in cartesian coords (pos)
+        time: time vector that corresponds to both ee and error trajectories
+        brain: brain to compute correction
+        nTrials: Number of times to repeat the trajectory
     Returns:
         final_traj: Trajectory object containing results from the final trajectory
+        errorTot: joint position MAE over nTrials
+        PCact: evolution of Purkinje Cells over nTrials
+        mf_dcn: evolution of mf-dcn weights over nTrials
+        pc_dcn: evolution of pc-dcn weights over nTrials
+
     '''
-    # arm starts with no velocity or acceleration and the first position along the traj
+    # initialize the trajectory
     currPos       = traj_w_error.pos[0,:] 
-    currVel       = np.zeros_like(currPos)
-    currAcc       = np.zeros_like(currPos)
+    currVel       = traj_w_error.vel[0,:] 
+    currAcc       = traj_w_error.acel[0,:] 
     arm.move(currPos, currVel, currAcc)
     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
                             torq=np.zeros_like(traj_w_error.torq),
@@ -313,114 +253,133 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain):
                             accel=np.zeros_like(traj_w_error.acel))
     corrTorque = np.zeros_like(currPos)
     torrPd = np.zeros_like(currPos)
-    nTrials = 1500
     errorTot = np.zeros(nTrials)
     mf_dcn = np.zeros((nTrials, arm.njoints*2))
     pc_dcn = np.zeros_like(mf_dcn)
+    PCact = np.zeros((len(time), arm.njoints*2))
+    state = 0
+    step = np.floor(len(time) / brain.nPFs)
     # PD Constants
     kp = np.ones(arm.njoints)*20
     kd = 2*np.sqrt(kp)
-    PCact = np.zeros((len(time), arm.njoints*2))
-    state = 0
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
             qError  = angle_diff(traj_w_error.pos[i], currPos)
             qdError = traj_w_error.vel[i] - currVel
-            # compute corrections
-            state = int(np.floor(i * brain.nPFs / len(time)))
-            corrTorque = brain.compute(qError, qdError, state)
+            # compute corrections, but brain only fires once for every PF
+            if i % step ==0:
+                corrTorque = brain.compute(qError, qdError, state)
+                state += 1
             torrPd = kp*(qError) + kd*(qdError)
-
             # move the arm
+            currAcc = arm.forward(currPos, currVel, torque + corrTorque + torrPd)
             if i > 0:
                 dt      = time[i] - time[i-1]
                 currVel = (currVel + currAcc *dt)
                 currPos = pin.integrate(arm.model, currPos, currVel * dt)
-            currAcc = arm.forward(currPos, currVel, torque + corrTorque + torrPd)
             arm.move(currPos, currVel, currAcc)
-            final_traj.torq[i] = torque + corrTorque + torrPd # stores for plot
-
-            final_traj.eePos[i,:] = arm.getPos()
+            # store results for plotting
+            final_traj.pos[i,:]   = currPos
             if trial == nTrials-1:
-                # store results
-                final_traj.pos[i,:]   = currPos
+                final_traj.torq[i] = torque + corrTorque + torrPd
+                final_traj.eePos[i,:] = arm.getPos()
                 final_traj.vel[i,:]   = currVel
                 final_traj.acel[i,:]  = currAcc
                 PCact[i,:] = brain.getPC()
         # reset between each trial
-        errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)])
-        currPos       = traj_w_error.pos[0,:] 
-        currVel       = np.zeros_like(currPos)
-        currAcc       = np.zeros_like(currPos)
+        currPos          = traj_w_error.pos[0,:] 
+        currVel          = traj_w_error.vel[0,:] 
+        currAcc          = traj_w_error.acel[0,:] 
+        arm.move(currPos, currVel, currAcc)
+        # store for plotting
+        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
         mf_dcn[trial, :] = brain.getMF_DCN()
         pc_dcn[trial, :] = brain.getPC_DCN()
-        arm.move(currPos, currVel, currAcc)
     return final_traj, errorTot, PCact, mf_dcn, pc_dcn
 
+def fillTrajectory(traj, arm):
+    """
+    computes any missing derivates through getDerivatives()
+    and computes missing joint positions thru IK makeJointData()
+    """
+    time = traj.time
+    if traj.velocity is None or traj.acceleration is None:
+        traj.velocity, traj.acceleration = getDerivatives(time, traj.position, dx=traj.velocity)
+    if traj.joint_position is None:
+        traj.joint_position, traj.joint_velocity, traj.joint_acceleration = makeJointData(arm, traj.position, traj.velocity, traj.acceleration)
+    elif traj.joint_velocity is None or traj.joint_acceleration is None:
+        traj.joint_velocity, traj.joint_acceleration = getDerivatives(time, traj.joint_position, dx=traj.joint_velocity)
+    return traj
 
 ###################################
-def main():
+def simulate(exp, save, showOutput, grav):
 ###################################
-    # load user preferences from command line (UNUSED CURRENTLY)
-    experiment, save = parse_args()
-
-    # hardcoded for easy changing CURRENTLY
-    fname      = "traj_006.csv" 
-    armFile    = "arm_3dofIllusoryMassBig.urdf" 
-    illFile    = "arm_3dof.urdf" 
-    n_dof      = 3 
-
-    # load end effector trajectory
-    desired_ee_data, time, n_dim = get_trajectory(fname)   
-    desired_ee_traj = armTraj(desired_ee_data[:, 0:3], desired_ee_data[:, 3:6], desired_ee_data[:, 6:9])
-    # use if traj doesn't have derivative data
-    #desired_ee_traj = makeEEData(desired_ee_data, time)
+    trajFile   = exp.trajectory 
+    armFile    = exp.actualArm
+    illFile    = exp.illusoryArm 
+    n_dof      = exp.nDof 
 
     # instantiate limb, motor control unit, brain    
     if n_dof == 2:
-        arm         = dynamic_2dof_arm("models/"+armFile) 
-        illusoryArm = dynamic_2dof_arm("models/"+illFile) 
-    else:
-        arm         = dynamic_3dof_arm("models/"+armFile) 
-        illusoryArm = dynamic_3dof_arm("models/"+illFile) 
+        arm         = dynamic_2dof_arm(armFile, disp=showOutput) 
+        illusoryArm = dynamic_2dof_arm(illFile, disp=showOutput) 
+    elif n_dof == 3:
+        arm         = dynamic_3dof_arm(armFile, disp=showOutput) 
+        illusoryArm = dynamic_3dof_arm(illFile, disp=showOutput) 
     brain           = cerebellum(n_dof=arm.njoints)
 
-    # turn gravity off
-    #arm.model.gravity = pin.Motion.Zero()
-    #illusoryArm.model.gravity = pin.Motion.Zero()
+    # load desired trajectory
+    # for smoothest trajectories, the trajectory should have analytically determined 
+    # cartesian pos, vel, accel and joint-space q, qd, qdd. If not they will be calculated, 
+    # but this introduces noise in the double-differentation 
+    traj_data = load_trajectory(trajFile)   
+    traj_data = fillTrajectory(traj_data, arm)
+    # splitting into desired joint (traj_w_error) and cartesian (desired_ee_traj) data
+    time                = traj_data.time
+    desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
+    traj_w_error        = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
+    traj_no_error       = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
+    traj_no_error.eePos = desired_ee_traj.pos
 
-    # Inverse Dynamics: computing the torques along a trajectory (with error)
-    traj_w_error      = makeJointData(illusoryArm, desired_ee_traj, time)
+    # turn gravity off
+    if grav == False:
+        arm.model.gravity         = pin.Motion.Zero()
+        illusoryArm.model.gravity = pin.Motion.Zero()
+
+    # Inverse Dynamics: computing the torques along a trajectory (with error) and recording where those torques make you end up
     traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
+    traj_no_error.torq, _                 = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot, pc, mfdcn, pcdcn = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain)
+    final_traj, errorTot, pc, mfdcn, pcdcn = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=1500)
+    # no-brain case for a control 
+    cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
+    
+    # saving trajectories
+    trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
+    arm_ids = {1: armFile, 2: armFile, 3: armFile, 4: illFile}
+    if save:
+       save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
 
-    # forward dynamics on the no-brain case for a control 
-    cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, 
-                                     desired_ee_traj.pos[0], time)
+    if not showOutput:
+        print("Simulation Complete...")
+        return
 
     # calculating error for plotting
-    traj_no_error      = makeJointData(arm, desired_ee_traj, time)
-    traj_no_error.torq, _ = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
     errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  cntrl_traj.torq)]
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]
+    errJointNoBrain    = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.pos,  cntrl_traj.pos)]
     errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  final_traj.eePos)]
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(desired_ee_traj.pos,  cntrl_traj.eePos)]
     print(f"average distance error: {np.sum(errDistBrain)/len(time)}")
 
     # plotting arm data
-    plot_results(traj_no_error, cntrl_traj, final_traj, time, errTorqNoBrain, errTorqBrain, 
+    plot_results(traj_no_error, traj_w_error, final_traj, time, errTorqNoBrain, errTorqBrain, 
                  errDistNoBrain, errDistBrain, n_dof)
     # plotting brain data
-    plot_brain_results(errorTot, errDistNoBrain, pc, time, mfdcn, pcdcn)
-    # saving trajectories
-    trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
-    arm_ids = {1: armFile, 2: armFile, 3: armFile, 4: illFile}  # swap in your actual arm identifiers
-    if save:
-       save_trajectories(trajectories, arm_ids, time[1] - time[0])
+    plot_brain_results(errorTot, errJointNoBrain, pc, time, mfdcn, pcdcn)
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     dt = time[1] - time[0]
@@ -457,5 +416,3 @@ def main():
             viz = initViz(playArm)
         viz.play(traj.pos, dt)
         prevChoice = userTraj
-
-main()

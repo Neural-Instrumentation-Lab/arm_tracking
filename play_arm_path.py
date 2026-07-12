@@ -1,8 +1,8 @@
 import pickle
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
-from exp_02_09_atrack_assets import simplest_2dof_limb, simplest_2dof_controller, cerebellum_marr_albus, dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff
-from experiment import Experiment
+from arm_assets_v01 import dynamic_3dof_arm, dynamic_2dof_arm
+from experiment_assets import Experiment
 
 """
 HOW TO WATCH TRAJECTORIES:

@@ -1,7 +1,9 @@
 numpy
+sympy
 matplotlib
 scipy
 pin
 meshcat
 ipykernel
 pybind11
+pandas
