@@ -17,6 +17,7 @@ from pathlib import Path
 from registry import EXPERIMENTS
 import model_v01
 import play_arm_path
+import matplotlib.pyplot as plt
 
 def print_list() -> None:
     width = max(len(name) for name in EXPERIMENTS) + 2
@@ -55,11 +56,6 @@ def main() -> None:
         "--no_grav", action="store_true",
         help="Turns gravity off for the experiment"
     )
-    parser.add_argument(
-        "--save_weights",
-        help="Location to save the resulting weights"
-    )
-
 
     args = parser.parse_args()
 
@@ -86,14 +82,21 @@ def main() -> None:
         return
 
     if not args.view:
-        model_v01.simulate(exp, args.save, not args.hide_output, not args.no_grav, args.save_weights)
+        model_v01.simulate(exp, args.save, not args.hide_output, not args.no_grav)
     else:
         try:
+            armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_arm" + exp.graphs.suffix))
+            brainPlot = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_brain" + exp.graphs.suffix))
+            plt.imshow(armPlot)
+            plt.axis('off')
+            plt.show()
+            plt.axis('off')
+            plt.imshow(brainPlot)
+            plt.show()
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")
-            model_v01.simulate(exp, True, False, True)
-            play_arm_path.play_traj(exp)
+            model_v01.simulate(exp, True, True, True)
 
 
 if __name__ == "__main__":

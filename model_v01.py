@@ -23,7 +23,7 @@ import garrido_brain_cpp as gc
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
-from experiment_assets import Experiment, Trajectory, load_trajectory
+from experiment_assets import load_trajectory, load_weights, save_weights, prepare_brain_weights
 
 matplotlib.use('TkAgg')
 
@@ -42,7 +42,7 @@ class brainData:
         self.pc_dcn  = np.zeros((nTrials, nDof*2)) 
 
 ###################################
-def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, nDof):
+def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, nDof, saveLoc=None, show=True, save=False):
 ###################################    
     '''
     plots desired and actual end effector positions
@@ -109,9 +109,13 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     axs[pltN].set_ylabel("ee distance error")
     axs[pltN].legend(["No Brain Error", "Brain Error"])
     axs[pltN].grid(True)
-    plt.show()
 
-def plot_brain_results(errorTot, errJointNoBrain, brainResults, time):
+    if save:
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
+    if show:
+        plt.show()
+
+def plot_brain_results(errorTot, errJointNoBrain, brainResults, time, saveLoc=None, show=True, save=False):
     '''
     Args:
         errorTot: Vector of joint MAE over nTrials
@@ -127,7 +131,7 @@ def plot_brain_results(errorTot, errJointNoBrain, brainResults, time):
     axs[pltN, 0].set_ylabel("Mean Absolute Error")
     axs[pltN, 0].set_title("1.5kg Mass")
     axs[pltN, 0].axhline(np.sum(errJointNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
-    axs[pltN, 0].legend(["Brain Erorr", "No Brain Error"])
+    axs[pltN, 0].legend(["Brain Error", "No Brain Error"])
     # plotting PC activity over last trial of Joint 2
     pltN += 1
     axs[pltN, 0].plot(time, brainResults.pc[:, 1:3])
@@ -147,7 +151,11 @@ def plot_brain_results(errorTot, errJointNoBrain, brainResults, time):
     axs[pltN, 1].set_xlabel("Trial")
     axs[pltN, 1].set_ylabel("Weight")
     axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Antagonist")
-    plt.show()
+
+    if save:
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
+    if show:
+        plt.show()
 
 def getDerivatives(t, x, dx=None):
     '''
@@ -333,7 +341,7 @@ def playVideo(time, trajectories, arm_ids, arm, illusoryArm):
         prevChoice = userTraj
 
 ###################################
-def simulate(exp, save, showOutput, grav, saveWts):
+def simulate(exp, save, showOutput, grav):
 ###################################
     """
     Args:
@@ -377,17 +385,14 @@ def simulate(exp, save, showOutput, grav, saveWts):
     traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
     traj_no_error.torq, _                 = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
 
+    # loading initial brain weights and setting plasticity
+    plastic, wts = prepare_brain_weights(exp)
+    brain.setActiveSites(plastic["pf_pc"], plastic["mf_dcn"], plastic["pc_dcn"])
+    if wts is not None:
+        brain.loadWts(wts.pf_pc, wts.mf_dcn, wts.pc_dcn)
+
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    if exp.initialWts is None:
-        brain.set_pf_pc_only(False)
-    else:
-        brain.set_pf_pc_only(True)
-        with open(exp.initialWts) as wtsFile:
-            weights = np.loadtxt(wtsFile, delimiter=',', dtype=float, skiprows=1)
-        brain.loadWts(weights[:6], weights[6:])
-
-
     final_traj, errorTot, brainResults = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
     # no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
@@ -396,23 +401,17 @@ def simulate(exp, save, showOutput, grav, saveWts):
     trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
     arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: illFile}
     if save:
-       save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
-    # saving brain weights
-    if saveWts is not None:
-        headerRow = [g(y) for y in ["mf_dcn_j"+str(x+1) for x in range(n_dof)]+["pc_dcn_j"+str(x+1) for x in range(n_dof)] for g in (lambda y: y+"_a", lambda y: y+"_aa")]
-        with open(saveWts, "w") as fp:
-            np.savetxt(fp.name, np.concat([brainResults.mf_dcn[-1,:], brainResults.pc_dcn[-1,:]], axis=0).reshape(1, -1), delimiter=',', fmt="%0.5f", header=",".join(headerRow), comments="") 
+        save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
+        save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1,:], brainResults.pc_dcn[-1,:])
+
+    # plotting 
+    errJointNoBrain    = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.pos,  cntrl_traj.pos)]
+    plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
+    plot_brain_results(errorTot, errJointNoBrain, brainResults, time, show=showOutput, saveLoc=exp.graphs, save=save)
 
     if not showOutput:
         print("Simulation Complete...")
         return
-
-    # calculating error for plotting
-    errJointNoBrain    = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.pos,  cntrl_traj.pos)]
-
-    # plotting 
-    plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof)
-    plot_brain_results(errorTot, errJointNoBrain, brainResults, time)
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     playVideo(time, trajectories, arm_ids, arm, illusoryArm)

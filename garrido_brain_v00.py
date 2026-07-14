@@ -21,6 +21,9 @@ class cerebellum:
         self.LTP_max_dcn = 1e-3 # long-term potentiation
         self.LTD_max_dcn = 1e-4 # long-term depression 
         self.alpha = 1000 # LTP decay factor
+        self.active_pf_pc = True
+        self.active_pc_dcn = True
+        self.active_mf_dcn = True
 
     def granuleLayer(self, state):
         '''
@@ -75,8 +78,10 @@ class cerebellum:
     def getnPFs(self):
         return(self.nPFs)
 
-    def set_pf_pc_only(self, val):
-        self.pf_pc_only = val
+    def setActiveSites(self, pf_pc, mf_dcn, pc_dcn):
+        self.active_mf_dcn = mf_dcn
+        self.active_pc_dcn = pc_dcn
+        self.active_pf_pc  = pf_pc
 
     def updatePC_DCN(self):
         '''
@@ -102,6 +107,8 @@ class cerebellum:
         '''
         corr = self.dcnAct.copy()
         corr[1::2] *= -1
+        corr[2] = 0
+        corr[4] = 0
         corr = (corr).reshape(-1, 2).sum(axis=1) 
         return corr
     
@@ -120,20 +127,23 @@ class cerebellum:
         posCon = [1, 12, 6]
         velCon = [2, 10, 5]
         error = posCon*qError + velCon*qdError 
-        #error = np.tanh(error)
+        # error = np.tanh(error)
         agonist = np.maximum(error, 0)
         antagonist = np.maximum(-error, 0)
         error = np.stack([agonist, antagonist], axis=1).reshape(-1)  # (n_muscles,)
         #error = np.tanh(error) # clips errors to 0 - 1 BUT I DONT LIKE IT
         # for agonist / antagonist pairs
-        self.updatePF_PC(error)
+        if self.active_pf_pc:
+            self.updatePF_PC(error)
         self.purkinjeCompute()
-        if not self.pf_pc_only:
+        if self.active_mf_dcn:
             self.updateMF_DCN()
+        if self.active_pc_dcn:
             self.updatePC_DCN()
         self.DCNCompute()
         return self.dcnToTorque()
 
-    def loadWts(self, init_mf_dcn, init_pc_dcn):
+    def loadWts(self, init_pf_pc, init_mf_dcn, init_pc_dcn):
+        self.pf_pc_weights  = init_pf_pc
         self.mf_dcn_weights = init_mf_dcn
         self.pc_dcn_weights = init_pc_dcn

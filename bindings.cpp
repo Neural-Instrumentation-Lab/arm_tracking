@@ -25,7 +25,7 @@ PYBIND11_MODULE(garrido_brain_cpp, m) {
         .def("DCNCompute",    &Cerebellum::DCNCompute)
         .def("dcnToTorque",   &Cerebellum::dcnToTorque)
         .def("getnPFs",       &Cerebellum::getnPFs)
-        .def("set_pf_pc_only",&Cerebellum::set_pf_pc_only)
+        .def("setActiveSites",&Cerebellum::setActiveSites)
         .def("loadWts",       &Cerebellum::loadWts)
         .def("compute",       &Cerebellum::compute,
              py::arg("qError"), py::arg("qdError"), py::arg("state"));

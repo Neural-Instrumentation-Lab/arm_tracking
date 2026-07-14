@@ -1,5 +1,7 @@
 **/__pycache__/
 **/env/
 **/.vscode/
-*.pkl
 *.so
+**/results/arm_paths/*
+**/results/brain_weights/*
+**/results/graphs/*

@@ -25,7 +25,7 @@ inline Eigen::VectorXd angle_diff(const Eigen::VectorXd& a, const Eigen::VectorX
 class Cerebellum {
 public:
     explicit Cerebellum(int n_dof = 2)
-        : currPF(0), nPFs(500), pfIdx(0), nMuscles(n_dof * 2), pf_pc_only(true){
+        : currPF(0), nPFs(500), pfIdx(0), nMuscles(n_dof * 2), active_pf_pc(true), active_pc_dcn(true), active_mf_dcn(true){
         purAct          = Eigen::VectorXd::Zero(nMuscles);
         pf_pc_weights   = Eigen::MatrixXd::Zero(nPFs, nMuscles);
         mf_dcn_weights  = Eigen::VectorXd::Zero(nMuscles);
@@ -56,7 +56,7 @@ public:
     Eigen::VectorXd getPC() const  { return purAct; }
     Eigen::VectorXd getDCN() const { return dcnAct; }
     int getnPFs() const { return nPFs; }
-    void set_pf_pc_only(bool val) { pf_pc_only = val;}
+    void setActiveSites(const bool pf_pc, const bool mf_dcn, const bool pc_dcn) {active_mf_dcn = mf_dcn; active_pf_pc = pf_pc; active_pc_dcn = pc_dcn;}
 
     void updateMF_DCN() {
         Eigen::ArrayXd pa = purAct.array();
@@ -91,7 +91,8 @@ public:
         return out;
     }
 
-    void loadWts(const Eigen::VectorXd& init_mf_dcn, const Eigen::VectorXd& init_pc_dcn){
+    void loadWts(const Eigen::MatrixXd& init_pf_pc, const Eigen::VectorXd& init_mf_dcn, const Eigen::VectorXd& init_pc_dcn){
+        pf_pc_weights  = init_pf_pc;
         mf_dcn_weights = init_mf_dcn;
         pc_dcn_weights = init_pc_dcn;
     }
@@ -123,12 +124,13 @@ public:
             error[2 * i + 1] = antagonist;
         }
 
-        updatePF_PC(error);
+        if (active_pf_pc)
+            updatePF_PC(error);
         purkinjeCompute();
-        if (!pf_pc_only){
+        if (active_mf_dcn)
             updateMF_DCN();
+        if (active_pc_dcn)
             updatePC_DCN();
-        }
         DCNCompute();
         return dcnToTorque();
     }
@@ -137,7 +139,9 @@ public:
     int nPFs;
     int pfIdx;
     int nMuscles;
-    bool pf_pc_only;
+    bool active_pf_pc;
+    bool active_pc_dcn;
+    bool active_mf_dcn;
 
 private:
     Eigen::VectorXd purAct;
