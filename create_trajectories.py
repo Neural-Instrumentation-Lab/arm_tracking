@@ -411,6 +411,7 @@ def save_data(
         columns.append(arr)
  
     data = np.hstack(columns)
+    fname.parent.mkdir(parents=True, exist_ok=True)
     np.savetxt(fname, data, delimiter=",", fmt=fmt, header=",".join(headers), comments="")
  
     if meta:

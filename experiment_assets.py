@@ -273,6 +273,7 @@ def save_weights(
         none
     """
     fname = Path(fname)
+    fname.parent.mkdir(parents=True, exist_ok=True)
     np.savez(fname, pf_pc=np.asarray(pf_pc), mf_dcn=np.asarray(mf_dcn), pc_dcn=np.asarray(pc_dcn))
  
     if meta:
