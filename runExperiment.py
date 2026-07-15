@@ -18,6 +18,7 @@ from registry import EXPERIMENTS
 import model_v01
 import play_arm_path
 import matplotlib.pyplot as plt
+from experiment_assets import build_dependencies
 
 def print_list() -> None:
     width = max(len(name) for name in EXPERIMENTS) + 2
@@ -29,7 +30,7 @@ def print_list() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--experiment",
+        "--experiment", "-e",
         choices=sorted(EXPERIMENTS),   # argparse validates + shows valid names on error
         help="Name of the experiment to run.",
     )
@@ -66,6 +67,9 @@ def main() -> None:
     exp = EXPERIMENTS[args.experiment]
     problems = exp.validate()
     if problems:
+        deps = build_dependencies([exp], EXPERIMENTS)
+        if exp.validate(assume_produced=deps[exp.name]) is not None:
+            print(f"dependency issue. Run the following experiments with --save to produce the required dependencies: {deps[exp.name]}")
         print(f"Cannot run '{exp.name}':")
         for p in problems:
             print(f"  - {p}")

@@ -35,8 +35,8 @@ logging.basicConfig(
 
 class brainData:
     def __init__(self, nTrials, trajLen, nDof, nPFs):
-        self.pc      = np.zeros((trajLen, nDof*2)) 
-        self.dcn     = np.zeros((trajLen, nDof*2)) 
+        self.pc      = np.zeros((nTrials, trajLen, nDof*2)) 
+        self.dcn     = np.zeros((nTrials, trajLen, nDof*2)) 
         self.pf_pc   = np.zeros((nTrials, nPFs, nDof*2)) 
         self.mf_dcn  = np.zeros((nTrials, nDof*2)) 
         self.pc_dcn  = np.zeros((nTrials, nDof*2)) 
@@ -124,33 +124,58 @@ def plot_brain_results(errorTot, errJointNoBrain, brainResults, time, saveLoc=No
         time: time vector of the trajectory
     '''
     # plotting evolution of MAE over nTrials
-    fig, axs = plt.subplots(2, 2, figsize=(12, 12))
+    fig, axs = plt.subplots(3, 2, figsize=(12, 12), gridspec_kw={'hspace':0.3})
+    nTrials = brainResults.pc.shape[0]
+    sampleTrialNums = [1, int(np.ceil(nTrials/15)), int(np.ceil(nTrials/5)), int(np.ceil(nTrials*2/3))]
     pltN = 0
     axs[pltN, 0].plot(errorTot/len(time))
     axs[pltN, 0].set_xlabel("Trial")
     axs[pltN, 0].set_ylabel("Mean Absolute Error")
-    axs[pltN, 0].set_title("1.5kg Mass")
+    axs[pltN, 0].set_title("Evolution of MAE")
     axs[pltN, 0].axhline(np.sum(errJointNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
     axs[pltN, 0].legend(["Brain Error", "No Brain Error"])
     # plotting PC activity over last trial of Joint 2
     pltN += 1
-    axs[pltN, 0].plot(time, brainResults.pc[:, 1:3])
+    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[0]-1, :, 2])
+    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[1]-1, :, 2])
+    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[2]-1, :, 2])
+    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[3]-1, :, 2])
     axs[pltN, 0].set_xlabel("Time (s)")
     axs[pltN, 0].set_ylabel("PC Activation")
-    axs[pltN, 0].set_title("Purkinje Cell Activation (Joint 2)")
-    axs[pltN, 0].legend(["Joint 2 Agonist", "Joint 2 Antagonist"])
+    axs[pltN, 0].set_title("Purkinje Cell Activation (Joint 2 Agonist)")
+    axs[pltN, 0].legend([f"Trial {sampleTrialNums[0]}", f"Trial {sampleTrialNums[1]}", f"Trial {sampleTrialNums[2]}", f"Trial {sampleTrialNums[3]}"])
+    # plotting some PF-PC synapses
+    pltN += 1
+    axs[pltN, 0].plot(brainResults.pf_pc[:, 50, 2]) 
+    axs[pltN, 0].plot(brainResults.pf_pc[:, 175, 2]) 
+    axs[pltN, 0].plot(brainResults.pf_pc[:, 300, 2]) 
+    axs[pltN, 0].plot(brainResults.pf_pc[:, 400, 2])
+    axs[pltN, 0].set_xlabel("Trial")
+    axs[pltN, 0].set_ylabel("PF-PC Weight")
+    axs[pltN, 0].set_title("PF-PC Weights for Joint 2 Agonist")
+    axs[pltN, 0].legend(["100ms", "350ms", "600ms", "800ms"])
     # plotting MF_DCN weight of J2 Anti over nTrials
     pltN = 0
-    axs[pltN, 1].plot(brainResults.mf_dcn[:, 3])
+    axs[pltN, 1].plot(brainResults.mf_dcn[:, 2])
     axs[pltN, 1].set_xlabel("Trial")
     axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("MF_DCN Weight Joint 2 Antagonist")
+    axs[pltN, 1].set_title("MF_DCN Weight Joint 2 Agonist")
     # plotting PC_DCN weight of J2 Anti over nTrials
     pltN += 1
-    axs[pltN, 1].plot(brainResults.pc_dcn[:, 3])
+    axs[pltN, 1].plot(brainResults.pc_dcn[:, 2])
     axs[pltN, 1].set_xlabel("Trial")
     axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Antagonist")
+    axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Agonist")
+    # plotting DCN activity 
+    pltN += 1
+    axs[pltN, 1].set_xlabel("Time (s)")
+    axs[pltN, 1].set_ylabel("Weight")
+    axs[pltN, 1].set_title("DCN activity Joint 2 Agonist")
+    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[0]-1, :, 2])
+    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[1]-1, :, 2])
+    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[2]-1, :, 2])
+    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[3]-1, :, 2])
+    axs[pltN, 1].legend([f"Trial {sampleTrialNums[0]}", f"Trial {sampleTrialNums[1]}", f"Trial {sampleTrialNums[2]}", f"Trial {sampleTrialNums[3]}"])
 
     if save:
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
@@ -264,13 +289,13 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             arm.move(currPos, currVel, currAcc)
             # store results for plotting
             final_traj.pos[i,:]   = currPos
+            brainResults.pc[trial, i,:]  = brain.getPC()
+            brainResults.dcn[trial, i,:] = brain.getDCN()
             if trial == nTrials-1:
                 final_traj.torq[i] = torque + corrTorque + torrPd
                 final_traj.eePos[i,:] = arm.getPos()
                 final_traj.vel[i,:]   = currVel
                 final_traj.acel[i,:]  = currAcc
-                brainResults.pc[i,:]  = brain.getPC()
-                brainResults.dcn[i,:] = brain.getDCN()
         # reset between each trial
         currPos          = traj_w_error.pos[0,:] 
         currVel          = traj_w_error.vel[0,:] 

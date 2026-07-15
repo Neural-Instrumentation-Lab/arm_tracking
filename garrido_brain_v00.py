@@ -107,8 +107,6 @@ class cerebellum:
         '''
         corr = self.dcnAct.copy()
         corr[1::2] *= -1
-        corr[2] = 0
-        corr[4] = 0
         corr = (corr).reshape(-1, 2).sum(axis=1) 
         return corr
     
@@ -131,6 +129,7 @@ class cerebellum:
         agonist = np.maximum(error, 0)
         antagonist = np.maximum(-error, 0)
         error = np.stack([agonist, antagonist], axis=1).reshape(-1)  # (n_muscles,)
+        error = np.clip(error, 0, 1) 
         #error = np.tanh(error) # clips errors to 0 - 1 BUT I DONT LIKE IT
         # for agonist / antagonist pairs
         if self.active_pf_pc:

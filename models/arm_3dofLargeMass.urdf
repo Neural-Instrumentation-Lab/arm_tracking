@@ -70,7 +70,7 @@
     <child link="link3"/>
     <origin xyz="0 0 0.4" rpy="0 0 0"/>
     <!-- Assumed rotation axis -->
-    <axis xyz="0 1 0"/>
+    <axis xyz="0 -1 0"/>
     <limit lower="-3.1416" upper="3.1416"
            effort="100" velocity="2.0"/>
     <dynamics damping="0.0020" friction="0.35"/>
@@ -113,8 +113,8 @@
     <parent link="link1"/>
     <child link="link2"/>
     <!-- Attached at end of link1 -->
-    <origin xyz="0 0 0.310" rpy="0 0 0"/>
-    <axis xyz="0 1 0"/>
+    <origin xyz="0 0 0.310" rpy="0 1.57 0"/>
+    <axis xyz="0 -1 0"/>
     <limit lower="-3.1416" upper="3.1416"
            effort="100" velocity="2.0"/>
     <dynamics damping="0.001698" friction="0.35"/>

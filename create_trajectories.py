@@ -188,7 +188,7 @@ def rescale_to_corr(coord, lengths):
     l1, l2, l3 = lengths
     D = np.linalg.norm([x, y, z-l1])
     scaleF = (l2+l3) / D
-    return 0.999 * coord * scaleF
+    return 0.9999 * coord * scaleF
 
 def create_traj_009():
     '''
@@ -271,16 +271,15 @@ def create_traj_009():
             pos[i] = fixed
     vel = np.stack([funcs['vx'](t_arr), funcs['vy'](t_arr), funcs['vz'](t_arr)], axis=1)
     acc = np.stack([funcs['ax'](t_arr), funcs['ay'](t_arr), funcs['az'](t_arr)], axis=1)
-    # analytical joint data
     q1_r   = 0.1*np.sin(2*np.pi*t_arr)
-    q2_r   = np.pi/2 - 0.1*np.sin(2*np.pi*t_arr+np.pi/4)
-    q3_r   = -0.1*np.sin(2*np.pi*t_arr+np.pi/2)
+    q2_r   = 0.1*np.sin(2*np.pi*t_arr+np.pi/4)
+    q3_r   = 0.1*np.sin(2*np.pi*t_arr+np.pi/2)
     qd1_r  = 0.1*2*np.pi*np.cos(2*np.pi*t_arr)
-    qd2_r  = -0.1*2*np.pi*np.cos(2*np.pi*t_arr+np.pi/4)
-    qd3_r  = -0.1*2*np.pi*np.cos(2*np.pi*t_arr+np.pi/2)
+    qd2_r  = 0.1*2*np.pi*np.cos(2*np.pi*t_arr+np.pi/4)
+    qd3_r  = 0.1*2*np.pi*np.cos(2*np.pi*t_arr+np.pi/2)
     qdd1_r = -0.1*4*np.pi*np.pi*np.sin(2*np.pi*t_arr)
-    qdd2_r = 0.1*4*np.pi*np.pi*np.sin(2*np.pi*t_arr+np.pi/4)
-    qdd3_r = 0.1*4*np.pi*np.pi*np.sin(2*np.pi*t_arr+np.pi/2)
+    qdd2_r = -0.1*4*np.pi*np.pi*np.sin(2*np.pi*t_arr+np.pi/4)
+    qdd3_r = -0.1*4*np.pi*np.pi*np.sin(2*np.pi*t_arr+np.pi/2)
     q = np.column_stack([q1_r, q2_r, q3_r])
     qd = np.column_stack([qd1_r, qd2_r, qd3_r])
     qdd = np.column_stack([qdd1_r, qdd2_r, qdd3_r])

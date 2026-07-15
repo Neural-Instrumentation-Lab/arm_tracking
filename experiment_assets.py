@@ -62,11 +62,31 @@ class Experiment:
             already_exists = self.defaultWts.exists()
             will_be_produced = self.defaultWts in assume_produced
             if not already_exists and not will_be_produced:
-                problems.append(f"initialWts file not found: {self.defaultWts}")
-
- 
+                problems.append(f"defaultWts file not found: {self.defaultWts}")
         return problems
 
+
+def build_dependencies(to_run: list[Experiment], all_experiments: dict[str, Experiment]) -> dict[str, set[str]]:
+    """Map each experiment name -> names of experiments whose results it needs
+    first, inferred by matching initialWts against another experiment's
+    results path. Only creates an edge if the file doesn't already exist on
+    disk — if it's already there, there's no ordering requirement."""
+    producer_by_results = {
+        exp.finalWts: exp.name for exp in all_experiments.values() if exp.finalWts is not None
+    }
+    deps: dict[str, set[str]] = {}
+    for exp in to_run:
+        dep_names = set()
+        if exp.initialWts is not None and not exp.initialWts.exists():
+            producer = producer_by_results.get(exp.initialWts)
+            if producer is not None and producer != exp.name:
+                dep_names.add(producer)
+        if exp.defaultWts is not None and not exp.defaultWts.exists():
+            producer = producer_by_results.get(exp.defaultWts)
+            if producer is not None and producer != exp.name:
+                dep_names.add(producer)
+        deps[exp.name] = dep_names
+    return deps
 
 """
 Trajectory loading with a self-describing column convention.

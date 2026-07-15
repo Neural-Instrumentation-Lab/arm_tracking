@@ -26,33 +26,9 @@ import argparse
 import sys
 import time
 
-from experiment_assets import Experiment
+from experiment_assets import Experiment, build_dependencies
 from registry import EXPERIMENTS
 from model_v01 import simulate
-
-
-def build_dependencies(to_run: list[Experiment], all_experiments: dict[str, Experiment]) -> dict[str, set[str]]:
-    """Map each experiment name -> names of experiments whose results it needs
-    first, inferred by matching initialWts against another experiment's
-    results path. Only creates an edge if the file doesn't already exist on
-    disk — if it's already there, there's no ordering requirement."""
-    producer_by_results = {
-        exp.finalWts: exp.name for exp in all_experiments.values() if exp.finalWts is not None
-    }
-    deps: dict[str, set[str]] = {}
-    for exp in to_run:
-        dep_names = set()
-        if exp.initialWts is not None and not exp.initialWts.exists():
-            producer = producer_by_results.get(exp.initialWts)
-            if producer is not None and producer != exp.name:
-                dep_names.add(producer)
-        if exp.defaultWts is not None and not exp.defaultWts.exists():
-            producer = producer_by_results.get(exp.defaultWts)
-            if producer is not None and producer != exp.name:
-                dep_names.add(producer)
-        deps[exp.name] = dep_names
-    return deps
-
 
 def topological_order(to_run: list[Experiment], deps: dict[str, set[str]]) -> list[Experiment]:
     """Order to_run so every experiment comes after everything it depends on.

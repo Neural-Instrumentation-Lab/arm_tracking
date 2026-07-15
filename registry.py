@@ -150,7 +150,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             nTrials=1500,
             load_weight_groups = ('mf_dcn', 'pc_dcn'),
             initialWts=WTS / "10_final.npz",
-            defaultWts=WTS / "0kg.npz",
+            defaultWts=WTS / "0_final.npz",
             plastic=('pf_pc')
         ),
         Experiment(
@@ -166,7 +166,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             nTrials=1500,
             load_weight_groups = ('pc_dcn',),
             initialWts=WTS / "10_final.npz",
-            defaultWts=WTS / "0kg.npz",
+            defaultWts=WTS / "0_final.npz",
             plastic=('pf_pc', 'mf_dcn')
         ),
         Experiment(
@@ -182,7 +182,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             nTrials=1500,
             load_weight_groups = ('mf_dcn',),
             initialWts=WTS / "10_final.npz",
-            defaultWts=WTS / "0kg.npz",
+            defaultWts=WTS / "0_final.npz",
             plastic=('pf_pc', 'pc_dcn')
         ),
         Experiment(
@@ -197,12 +197,24 @@ EXPERIMENTS: dict[str, Experiment] = {
             nDof=3,
             nTrials=1500,
             load_weight_groups = ('pf_pc', 'pc_dcn', 'mf_dcn'),
-            initialWts=WTS / "0kg.npz",
+            initialWts=WTS / "0_final.npz",
             plastic=('pf_pc', 'pc_dcn', 'mf_dcn')
         ),
         Experiment(
+            name="calculate_0kg_weights",
+            description="0kg mass manipulated over 10,000 trials, all sites plastic",
+            trajectory=TRAJS / "traj_009.csv",
+            actualArm=ARMS / "arm_3dof.urdf",
+            illusoryArm=ARMS / "arm_3dof.urdf",
+            results=RESUL / "0_final.pkl",
+            finalWts=WTS / "0_final.npz",
+            graphs=GRAPH / "calculate_0.png",
+            nDof=3,
+            nTrials=10000,
+        ),
+        Experiment(
             name="calculate_0_5kg_weights",
-            description="0.5kg mass manipulated over 30,000 trials, all sites plastic",
+            description="0.5kg mass manipulated over 10,000 trials, all sites plastic",
             trajectory=TRAJS / "traj_009.csv",
             actualArm=ARMS / "arm_3dofSmallMass.urdf",
             illusoryArm=ARMS / "arm_3dof.urdf",
@@ -210,11 +222,11 @@ EXPERIMENTS: dict[str, Experiment] = {
             finalWts=WTS / "0_5_final.npz",
             graphs=GRAPH / "calculate_0_5.png",
             nDof=3,
-            nTrials=30000,
+            nTrials=10000,
         ),
         Experiment(
             name="calculate_1_5kg_weights",
-            description="1.5kg mass manipulated over 30,000 trials, all sites plastic",
+            description="1.5kg mass manipulated over 10,000 trials, all sites plastic",
             trajectory=TRAJS / "traj_009.csv",
             actualArm=ARMS / "arm_3dofMedMass.urdf",
             illusoryArm=ARMS / "arm_3dof.urdf",
@@ -222,11 +234,11 @@ EXPERIMENTS: dict[str, Experiment] = {
             finalWts=WTS / "1_5_final.npz",
             graphs=GRAPH / "calculate_1_5.png",
             nDof=3,
-            nTrials=30000,
+            nTrials=10000,
         ),
         Experiment(
             name="calculate_10kg_weights",
-            description="10kg mass manipulated over 30,000 trials, all sites plastic",
+            description="10kg mass manipulated over 10,000 trials, all sites plastic",
             trajectory=TRAJS / "traj_009.csv",
             actualArm=ARMS / "arm_3dofLargeMass.urdf",
             illusoryArm=ARMS / "arm_3dof.urdf",
@@ -234,7 +246,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             finalWts=WTS / "10_final.npz",
             graphs=GRAPH / "calculate_10.png",
             nDof=3,
-            nTrials=30000,
+            nTrials=10000,
         ),
 
     ]

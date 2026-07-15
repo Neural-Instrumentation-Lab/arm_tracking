@@ -117,6 +117,7 @@ public:
 
         Eigen::VectorXd error3 = posCon.cwiseProduct(qError) + velCon.cwiseProduct(qdError);
         Eigen::VectorXd error(nMuscles);
+        error = error.array().max(0.0).min(1.0);
         for (int i = 0; i < error3.size(); ++i) {
             double agonist    = std::max(error3[i], 0.0);
             double antagonist = std::max(-error3[i], 0.0);
