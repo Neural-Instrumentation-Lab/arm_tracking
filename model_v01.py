@@ -115,6 +115,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
+    plt.close(fig)
 
 def plot_brain_results(errorTot, errJointNoBrain, brainResults, time, saveLoc=None, show=True, save=False):
     '''
@@ -183,6 +184,7 @@ def plot_brain_results(errorTot, errJointNoBrain, brainResults, time, saveLoc=No
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
+    plt.close(fig)
 
 def getDerivatives(t, x, dx=None):
     '''

@@ -252,7 +252,7 @@ class dynamic_3dof_arm:
         torques   = np.zeros_like(positions)
         torquesPD = np.zeros_like(torques)
         eePos     = np.zeros((len(positions), 3))
-        kp        = np.ones(self.njoints) * 20 
+        kp        = np.ones(self.njoints) * 20
         kd        = 2*np.sqrt(kp) 
         pos       = positions[0]  
         vel       = velocities[0] 
