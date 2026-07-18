@@ -57,6 +57,10 @@ def main() -> None:
         "--no_grav", action="store_true",
         help="Turns gravity off for the experiment"
     )
+    parser.add_argument(
+        "--makeMovie", action="store_true",
+        help="outputs movie file. For a 1500 trial experiment, adds considerable runtime (2m 30s)."
+    )
 
     args = parser.parse_args()
 
@@ -86,7 +90,7 @@ def main() -> None:
         return
 
     if not args.view:
-        model_v01.simulate(exp, args.save, not args.hide_output, not args.no_grav)
+        model_v01.simulate(exp, args.save, not args.hide_output, not args.no_grav, args.makeMovie)
     else:
         try:
             armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_arm" + exp.graphs.suffix))

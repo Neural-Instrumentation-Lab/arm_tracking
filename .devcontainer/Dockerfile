@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libeigen3-dev \
     git \
     openssh-client \
+    ffmpeg \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 

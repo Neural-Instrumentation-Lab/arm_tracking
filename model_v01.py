@@ -24,6 +24,9 @@ import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
 from experiment_assets import load_trajectory, load_weights, save_weights, prepare_brain_weights
+import matplotlib.animation as animation
+from matplotlib.gridspec import GridSpec
+from pathlib import Path
 
 matplotlib.use('TkAgg')
 
@@ -63,14 +66,14 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     else:
         fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
     # calculating errors
-    errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.eePos,  final_traj.eePos)]
+    errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.eePos,  final_traj.eePos[-1,:])]
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.eePos,  cntrl_traj.eePos)]
     errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  cntrl_traj.torq)]
-    errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq)]
+    errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq[-1, :])]
     # plot joint 1 torque
     pltN = 0
     axs[pltN].plot(time, traj_no_error.torq[:,0] - traj_w_error.torq[:,0], linewidth=2, linestyle='--')
-    axs[pltN].plot(time, final_traj.torq[:,0] - traj_w_error.torq[:,0], linewidth=2)
+    axs[pltN].plot(time, final_traj.torq[-1, :,0] - traj_w_error.torq[:,0], linewidth=2)
     axs[pltN].set_title("Joint 1 Corrective Torque")
     axs[pltN].set_ylabel("Torque")
     axs[pltN].legend(["Ideal", "Brain"])
@@ -78,7 +81,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     # plot joint 2 torque
     pltN += 1
     axs[pltN].plot(time, traj_no_error.torq[:,1] - traj_w_error.torq[:,1], linewidth=2, linestyle='--')
-    axs[pltN].plot(time, final_traj.torq[:,1] - traj_w_error.torq[:,1], linewidth=2)
+    axs[pltN].plot(time, final_traj.torq[-1, :,1] - traj_w_error.torq[:,1], linewidth=2)
     axs[pltN].set_title("Joint 2 Corrective Torque")
     axs[pltN].set_ylabel("Torque")
     axs[pltN].legend(["Ideal", "Brain"])
@@ -87,7 +90,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     if nDof == 3:
         pltN += 1
         axs[pltN].plot(time, traj_no_error.torq[:,2] - traj_w_error.torq[:,2], linewidth=2, linestyle='--')
-        axs[pltN].plot(time, final_traj.torq[:,2] - traj_w_error.torq[:,2], linewidth=2)
+        axs[pltN].plot(time, final_traj.torq[-1, :,2] - traj_w_error.torq[:,2], linewidth=2)
         axs[pltN].set_title("Joint 3 Corrective Torque")
         axs[pltN].set_ylabel("Torque")
         axs[pltN].legend(["Ideal", "Brain"])
@@ -262,8 +265,8 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     currAcc       = traj_w_error.acel[0,:] 
     arm.move(currPos, currVel, currAcc)
     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
-                            torq=np.zeros_like(traj_w_error.torq),
-                            eePos=np.zeros_like(desired_ee_traj.pos),
+                            torq=np.zeros((nTrials, len(time), arm.njoints)),
+                            eePos=np.zeros((nTrials, len(time), 3)),
                             vel = np.zeros_like(traj_w_error.vel),
                             accel=np.zeros_like(traj_w_error.acel))
     corrTorque = np.zeros_like(currPos)
@@ -296,9 +299,9 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             final_traj.pos[i,:]   = currPos
             brainResults.pc[trial, i,:]  = brain.getPC()
             brainResults.dcn[trial, i,:] = brain.getDCN()
+            final_traj.eePos[trial, i,:] = arm.getPos()
+            final_traj.torq[trial, i] = torque + corrTorque + torrPd
             if trial == nTrials-1:
-                final_traj.torq[i] = torque + corrTorque + torrPd
-                final_traj.eePos[i,:] = arm.getPos()
                 final_traj.vel[i,:]   = currVel
                 final_traj.acel[i,:]  = currAcc
         # reset between each trial
@@ -370,8 +373,102 @@ def playVideo(time, trajectories, arm_ids, arm, illusoryArm):
         viz.play(traj.pos, dt)
         prevChoice = userTraj
 
+def movie(traj_no_error, final_traj, brainResults, time, nTrials, fname, joint=1):
+    '''
+    makes animated plots with matplot and saves them to location in fname.
+    Takes a considerable amount of runtime. 
+    '''
+    fig = plt.figure(figsize=(14, 8))
+    gs = GridSpec(4, 2, figure=fig, width_ratios=[2, 1])  # left col wider than right
+
+    timeskip = int(len(time) / 30)
+    trialskip = int(nTrials / 30)
+
+    # Big 3d plot of cartesian position of end effector 
+    posax = fig.add_subplot(gs[:, 0], projection="3d")
+    line = posax.plot([], [], [])[0]
+    axes_buffer = 0.1
+    posax.plot(traj_no_error.eePos[:,0], traj_no_error.eePos[:,1], traj_no_error.eePos[:,2])[0]
+    posax.set_xlim(traj_no_error.eePos[:, 0].min()-axes_buffer, traj_no_error.eePos[:, 0].max()+axes_buffer)
+    posax.set_ylim(traj_no_error.eePos[:, 1].min()-axes_buffer, traj_no_error.eePos[:, 1].max()+axes_buffer)
+    posax.set_zlim(traj_no_error.eePos[:, 2].min()-axes_buffer, traj_no_error.eePos[:, 2].max()+axes_buffer)
+    posax.set_xlabel('X [m]', fontsize=10)
+    posax.set_ylabel('Y [m]', fontsize=10)
+    posax.set_zlabel('Z [m]', fontsize=10)
+    posax.legend(["actual", "ideal"])
+
+    trial_array = range(nTrials)
+    # joint to show in the plots
+    jointSel = {1 : 0, 2 : 2, 3 : 4}
+    jointIdx = jointSel[joint]
+
+    # all these plots are on the right column
+    # mf-dcn over the trials
+    mfdcnax = fig.add_subplot(gs[0, 1])
+    mfdcnagon = mfdcnax.plot([],[])[0] 
+    mfdcnaagon = mfdcnax.plot([],[])[0]
+    mfdcnax.set_xlim(1, nTrials)
+    mfdcnax.set_ylim(0, max(brainResults.mf_dcn[:, jointIdx+1].max(), brainResults.mf_dcn[:,jointIdx].max()) + 2)
+    mfdcnax.set_title(f"mf-dcn weight [Joint {joint}]")
+    mfdcnax.legend(["agonist", "antagonist"])
+
+    # pc-dcn over the trials
+    pcdcnax = fig.add_subplot(gs[1,1])
+    pcdcnag = pcdcnax.plot([],[])[0]
+    pcdcnaag = pcdcnax.plot([],[])[0]
+    pcdcnax.set_xlim(1 ,nTrials)
+    pcdcnax.set_ylim(0, max(brainResults.pc_dcn[:,jointIdx].max(), brainResults.pc_dcn[:, jointIdx+1].max()) + 2) 
+    pcdcnax.set_title(f"pc-dcn weight [Joint {joint}]")
+    pcdcnax.legend(["agonist", "antagonist"])
+
+    # pc activity over time
+    pcax = fig.add_subplot(gs[2, 1])
+    pcagon = pcax.plot([],[])[0]
+    pcaagon = pcax.plot([],[])[0]
+    pcax.set_xlim(0, time.max())
+    pcax.set_ylim(0, 1)
+    pcax.set_title(f"pc activity [Joint {joint}]")
+    pcax.legend(["agonist", "antagonist"])
+
+    # dcn activity over time
+    dcnax = fig.add_subplot(gs[3, 1])
+    dcnagon = dcnax.plot([],[])[0]
+    dcnaagon = dcnax.plot([],[])[0]
+    dcnax.set_xlim(0, time.max())
+    dcnax.set_ylim(0, max(brainResults.dcn[:, :, jointIdx].max(), brainResults.dcn[:, :, jointIdx+1].max()))
+    dcnax.set_title(f"dcn activity [Joint {joint}]")
+    dcnax.legend(["agonist", "antagonist"])
+
+
+    fig.tight_layout()
+    tot_frames = int((len(time)/timeskip)*np.floor(nTrials/trialskip))
+    def update(frame_idx):
+        '''
+        updates frame data in animation
+        '''
+        trial_idx = ((frame_idx*timeskip) // len(time))*trialskip
+        step_idx = (timeskip*frame_idx) % len(time)
+        currPos = final_traj.eePos[trial_idx, :step_idx+1, :]
+        line.set_data_3d([currPos[:, 0], currPos[:, 1], currPos[:, 2]])
+        posax.set_title(f"Trial: {trial_idx+1}")
+        mfdcnagon.set_data(trial_array[:trial_idx], brainResults.mf_dcn[:trial_idx, jointIdx])
+        mfdcnaagon.set_data(trial_array[:trial_idx], brainResults.mf_dcn[:trial_idx, jointIdx+1])
+        pcagon.set_data(time[:step_idx+1], brainResults.pc[trial_idx, :step_idx+1, jointIdx])
+        pcaagon.set_data(time[:step_idx+1], brainResults.pc[trial_idx, :step_idx+1, jointIdx+1])
+        dcnagon.set_data(time[:step_idx+1], brainResults.dcn[trial_idx, :step_idx+1, jointIdx])
+        dcnaagon.set_data(time[:step_idx+1], brainResults.dcn[trial_idx, :step_idx+1, jointIdx+1])
+        pcdcnag.set_data(trial_array[:trial_idx], brainResults.pc_dcn[:trial_idx, jointIdx])
+        pcdcnaag.set_data(trial_array[:trial_idx], brainResults.pc_dcn[:trial_idx, jointIdx+1])
+
+    ani = animation.FuncAnimation(fig, update, tot_frames, interval=8, blit=False)
+    writer = animation.FFMpegWriter(fps=30, bitrate=1800)
+    saveLoc = Path(fname)
+    saveLoc.parent.mkdir(parents=True, exist_ok=True)
+    ani.save(saveLoc, writer, dpi=100)
+    plt.close()
+
 ###################################
-def simulate(exp, save, showOutput, grav):
+def simulate(exp, save, showOutput, grav, makeMovie):
 ###################################
     """
     Args:
@@ -432,16 +529,20 @@ def simulate(exp, save, showOutput, grav):
     arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: illFile}
     if save:
         save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
-        save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1,:], brainResults.pc_dcn[-1,:])
+        save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
 
     # plotting 
     errJointNoBrain    = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.pos,  cntrl_traj.pos)]
     plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_brain_results(errorTot, errJointNoBrain, brainResults, time, show=showOutput, saveLoc=exp.graphs, save=save)
 
+    if makeMovie:
+        movie(traj_no_error, final_traj, brainResults, time, exp.nTrials, "results/videos/"+exp.name+".mp4")
+
     if not showOutput:
         print("Simulation Complete...")
         return
+
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     playVideo(time, trajectories, arm_ids, arm, illusoryArm)

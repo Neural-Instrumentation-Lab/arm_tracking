@@ -232,9 +232,9 @@ that isn't inferable from the arrays themselves (e.g. training notes).
 """
 @dataclass
 class Weights:
-    pf_pc: np.ndarray    # shape (n_pf,)
-    mf_dcn: np.ndarray   # shape (n_muscle,)
-    pc_dcn: np.ndarray   # shape (n_muscle,)
+    pf_pc: np.ndarray    # shape (nTrials, n_pf, n_muscle)
+    mf_dcn: np.ndarray   # shape (nTrials, n_muscle)
+    pc_dcn: np.ndarray   # shape (nTrials, n_muscle,)
     meta: dict = field(default_factory=dict)
     source: Path | None = None
  

@@ -79,6 +79,11 @@ def main() -> None:
         "--show_output", action="store_true",
         help="Don't hide each sim's normal output (default is to hide it during batch runs).",
     )
+    parser.add_argument(
+        "--makeMovie", action="store_true",
+        help="Makes videos for all the experiments (MORE THAN DOUBLES RUNTIME).",
+    )
+
     args = parser.parse_args()
 
     if args.only:
@@ -136,7 +141,7 @@ def main() -> None:
         print(f"[{i}/{len(to_run)}] {exp.name} ... ", end="", flush=True)
         start = time.time()
         try:
-            simulate(exp, save=save, showOutput= not hide_output, grav=True)
+            simulate(exp, save=save, showOutput= not hide_output, grav=True, makeMovie=args.makeMovie)
             elapsed = time.time() - start
             results.append((exp.name, True, elapsed, None))
             print(f"ok ({elapsed:.1f}s)")
