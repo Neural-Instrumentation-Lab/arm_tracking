@@ -23,14 +23,16 @@ Dev Container - click `Reopen in Container`
 ```bash
 python runExperiment.py --list                            # see all experiments + descriptions
 python runExperiment.py --experiment full_10              # run one
-python runExperiment.py -e full_10 --dry-run    # validate paths only, don't run
+python runExperiment.py -e full_10 --dry-run              # validate paths only, don't run
 python runExperiment.py --experiment full_10 --save --hide_output
 python runExperiment.py --experiment full_10 --view
+python runExperiment.py --experiment full_10 --makeMovie 
 ```
 
 - `--save` — save results after running (weights, graphs, trajectories, etc.)
 - `--hide_output` — suppress the sim's normal console/plot output
 - `--view` — does not re-run experiment, only brings up previous data to be viewed 
+- `--makeMovie` — produces a video of the learning in results/videos (adds significant runtime)
 
 Some experiments require other experiment's results for their own initial conditions. An experiment will error and tell you which experiments to run to construct their dependencies.
 Alternatively, you can run all the experiments to have all their results already. Warning: running all the experiments takes ~15 mins. 
@@ -71,6 +73,7 @@ Experiment(
     results=RESUL / "new_exp.pkl",             # name of trajectory results file
     finalWts=WTS / "new_exp.npz",              # name of brain weight results file
     graphs=GRAPH / "new_exp.png",              # name of resulting graphs (will be split into new_exp_brain.png and new_exp_arm.png)
+    videos=VIDEOS / "new_exp.mp4",             # name of resulting video when given --makeMovie argument
     nDof=3,
     nTrials=1500,
     load_weight_groups=(),                     # which synapses should load from initWts (OPTIONAL)

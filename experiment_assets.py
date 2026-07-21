@@ -20,6 +20,7 @@ class Experiment:
     results: Path            # where .pkl of arm trajectories is stored
     finalWts : Path          # where .npz of brain weights is stored
     graphs : Path            # where .pngs of results are stored 
+    videos : Path            # where .mp4 of video results are stored 
     nDof : int # how many degrees of freedom arm has
     nTrials : int # how many times the traj is repeated
     load_weight_groups: tuple[WeightGroup, ...] = field(default_factory=tuple) # which sites are to be loaded from initialWts file

@@ -113,8 +113,8 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     axs[pltN].legend(["No Brain Error", "Brain Error"])
     axs[pltN].grid(True)
 
-    saveLoc.parent.mkdir(parents=True, exist_ok=True)
     if save:
+        saveLoc.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
@@ -182,8 +182,8 @@ def plot_brain_results(errorTot, errJointNoBrain, brainResults, time, saveLoc=No
     axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[3]-1, :, 2])
     axs[pltN, 1].legend([f"Trial {sampleTrialNums[0]}", f"Trial {sampleTrialNums[1]}", f"Trial {sampleTrialNums[2]}", f"Trial {sampleTrialNums[3]}"])
 
-    saveLoc.parent.mkdir(parents=True, exist_ok=True)
     if save:
+        saveLoc.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()

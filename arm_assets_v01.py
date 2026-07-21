@@ -15,8 +15,11 @@ from scipy.optimize import fmin_bfgs
 ## create a Joint Angle Error ##################################################
 class JointAngleError(Exception): pass
 
-# makes things look prettier
 class armTraj:
+    '''
+    stores a bunch of trajectory information to make handling
+    the data easier
+    '''
     def __init__(self, pos=[], vel=[], accel=[], torq=[], time=[], eePos = []):
         self.pos   = pos
         self.vel   = vel
@@ -156,13 +159,19 @@ class dynamic_3dof_arm:
         return pin.randomConfiguration(self.model)
 
     def getEEFromJoint(self, pos):
-        # returns the end effector position [x, y, z]
-        # from a joint config vector
+        '''
+        returns the end effector position [x, y, z]
+        from a joint config vector
+        '''
         pin.forwardKinematics(self.model, self.data, pos)
         pin.updateFramePlacements(self.model, self.data)
         return self.getPos()
 
     def is_valid_location(self, pos):
+        '''
+        returns true if position pos (x, y, z)
+        can be reached by the arm
+        '''
         L1, L2, L3 = self.lengths
         x, y, z = pos
         D = np.linalg.norm([x, y, z-L1])
@@ -271,6 +280,9 @@ class dynamic_3dof_arm:
         return torquesPD, eePos
 
     def idealTorques(self, positions, velocities, accels):
+        '''
+        open loop inverseDynamics()
+        '''
         torques   = np.zeros_like(positions)
         for i, (pos, vel, acc) in enumerate(zip(positions, velocities, accels)):
             torques[i, :] = self.inverse(pos, vel, acc)
