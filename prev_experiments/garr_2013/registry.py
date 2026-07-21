@@ -5,12 +5,12 @@ from experiment_assets import Experiment
 # This replaces the "type 3 for experiment 3" problem: every experiment has
 # a memorable name and a description right next to its file paths.
 
-ARMS  = Path("models")
-TRAJS = Path("trajectories")
-RESUL = Path("results/arm_paths")
-WTS   = Path("results/brain_weights")
-GRAPH = Path("results/graphs")
-VIDEO = Path("results/videos")
+ARMS  = Path("prev_experiments/garr_2013/models")
+TRAJS = Path("prev_experiments/garr_2013/trajectories")
+RESUL = Path("prev_experiments/garr_2013/results/arm_paths")
+WTS   = Path("prev_experiments/garr_2013/results/brain_weights")
+GRAPH = Path("prev_experiments/garr_2013/results/graphs")
+VIDEO = Path("prev_experiments/garr_2013/results/videos")
 
 EXPERIMENTS: dict[str, Experiment] = {
     e.name: e
