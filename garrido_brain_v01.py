@@ -122,8 +122,8 @@ class cerebellum:
             self.DCNCompute()
             return self.dcnToTorque()
         self.granuleLayer(state)
-        posCon = [1, 12, 6]
-        velCon = [2, 10, 5]
+        posCon = np.ones(int(self.nMuscles/2))
+        velCon = np.ones(int(self.nMuscles/2))
         error = posCon*qError + velCon*qdError 
         # error = np.tanh(error)
         agonist = np.maximum(error, 0)

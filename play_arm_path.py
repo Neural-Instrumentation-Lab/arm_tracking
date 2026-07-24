@@ -1,7 +1,7 @@
 import pickle
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
-from arm_assets_v01 import dynamic_3dof_arm, dynamic_2dof_arm
+from arm_assets_v02 import dynamic_3dof_arm, dynamic_2dof_arm, baxter_reduced
 from experiment_assets import Experiment
 
 """
@@ -79,6 +79,8 @@ def play_traj(exp):
                 arm         = dynamic_2dof_arm(fpath, disp=False) 
             if traj.pos.shape[1] == 3:
                 arm         = dynamic_3dof_arm(fpath, disp=False) 
+            if traj.pos.shape[1] == 7:
+                arm         = baxter_reduced(fpath, pkgDirs=["./"])
             viz = initViz(arm)
         viz.play(traj.pos, traj.dt*speed)
         prevChoice = userTraj

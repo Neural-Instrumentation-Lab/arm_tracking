@@ -275,7 +275,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     state = 0
     step = np.floor(len(time) / brain.getnPFs())
     # PD Constants
-    kp = np.ones(arm.njoints)*20
+    kp = np.ones(arm.njoints)*0
     kd = 2*np.sqrt(kp)
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
@@ -385,7 +385,7 @@ def playVideo(time, trajectories, arm_ids, arm, illusoryArm):
                 continue
         traj = trajectories[userTraj]
         if prevChoice == 0 or arm_ids[userTraj] != arm_ids[prevChoice]:
-            playArm = dynamic_3dof_arm(arm_ids[userTraj], disp=False)
+            playArm = baxter_reduced(arm_ids[userTraj], pkgDirs=["./"], disp=False)
             viz = initViz(playArm)
         viz.play(traj.pos, dt)
         prevChoice = userTraj
@@ -499,12 +499,9 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     illFile    = exp.illusoryArm 
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
-    if n_dof == 2:
-        arm         = dynamic_2dof_arm(armFile, disp=showOutput) 
-        illusoryArm = dynamic_2dof_arm(illFile, disp=showOutput) 
-    elif n_dof == 3:
-        arm         = dynamic_3dof_arm(armFile, disp=showOutput) 
-        illusoryArm = dynamic_3dof_arm(illFile, disp=showOutput) 
+    package_dirs = ["./"] 
+    arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs)
+    illusoryArm = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs) # not needed in this version
     # brain           = gc.Cerebellum(arm.njoints) 
     brain           = cerebellum(n_dof=arm.njoints)
 
@@ -513,6 +510,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # cartesian pos, vel, accel and joint-space q, qd, qdd. If not they will be calculated, 
     # but this introduces noise in the double-differentation 
     traj_data           = load_trajectory(trajFile)   
+    traj_data           = transform(traj_data, arm)
     traj_data           = fillTrajectory(traj_data, arm)
     time                = traj_data.time
     desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
@@ -563,26 +561,3 @@ def simulate(exp, save, showOutput, grav, makeMovie):
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     playVideo(time, trajectories, arm_ids, arm, illusoryArm)
-
-
-def test():
-    '''
-    temporary
-    '''
-    trajFile   = "trajectories/circleTrajPosCartesianOnly.csv" 
-    armFile    = "baxter_description/urdf/baxter_fixed.urdf"
-    package_dirs = ["./"] 
-    arm = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs)
-    traj_data           = load_trajectory(trajFile)   
-    traj_data           = transform(traj_data, arm)
-    traj_data           = fillTrajectory(traj_data, arm)
-    time                = traj_data.time
-    print(arm.R, arm.t) 
-
-    viz = initViz(arm)
-    downsamped_traj = traj_data.joint_position[::15] 
-    while True:
-        viz.play(downsamped_traj, 0.002*15)
-
-if __name__ == "__main__":
-    test()

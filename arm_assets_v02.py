@@ -227,7 +227,7 @@ class dynamic_3dof_arm:
         currAcc = self.forward(currPos, currVel, torques[0])
         self.move(currPos, currVel, currAcc)
         torrPd        = np.zeros_like(currPos)
-        kp = np.ones(self.njoints)*20
+        kp = np.ones(self.njoints)*0
         kd = 2*np.sqrt(kp)
         for i, tau in enumerate(torques):
             torrPd = kp*angle_diff(positions[i], currPos) + kd*(velocities[i] - currVel)
@@ -261,7 +261,7 @@ class dynamic_3dof_arm:
         torques   = np.zeros_like(positions)
         torquesPD = np.zeros_like(torques)
         eePos     = np.zeros((len(positions), 3))
-        kp        = np.ones(self.njoints) * 20
+        kp        = np.ones(self.njoints)*0
         kd        = 2*np.sqrt(kp) 
         pos       = positions[0]  
         vel       = velocities[0] 
@@ -417,19 +417,14 @@ class baxter_reduced(dynamic_3dof_arm):
         self.njoints = 7 
         self.eeDes = np.array([0, 0, 0]) 
         self.eeId = self.model.getFrameId("left_gripper")
+
         # these are the rotational / translation shifts between pinocchio and ROS's coordinates. They can be recalculated
         # with fit_rigid_transform 
         self.R = np.array([[-9.99982203e-01,  5.88627211e-03,  9.72265375e-04],
                            [-5.88789253e-03, -9.99981268e-01, -1.67226837e-03],
                            [ 9.62403736e-04, -1.67796321e-03,  9.99998129e-01]]) 
         self.t = np.array([1.3833375,0.57457608,-0.02481647])
-        print(self.eeId)
 
-        # compute joint lengths for IK
-        pin.framesForwardKinematics(self.model, self.data, pin.neutral(self.model))
-        print(self.data.oMf[self.eeId].translation)
-
-        # Motor inertias, urdf files don't support these natively for some reason
         if disp:
             # print neutral config
             q = pin.neutral(self.model)
@@ -486,13 +481,11 @@ class baxter_reduced(dynamic_3dof_arm):
             pin.updateFramePlacements(self.model, self.data)
             err = oMdes - self.data.oMf[self.eeId].translation
             if np.linalg.norm(err) < eps:
-                success = True
                 break
             if i >= it_max:
-                success = False
-                break
+                raise JointAngleError(f"Inverse kinematics failed to converge after {i} iterations, last error: {np.linalg.norm(err)}")
             J = pin.computeFrameJacobian(self.model, self.data, q, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
             v = J.T.dot(np.linalg.solve(J.dot(J.T) + damp * np.eye(3), err))
             q = pin.integrate(self.model, q, v * dt)
             i += 1
-        return q if success else None
+        return q 
