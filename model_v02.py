@@ -315,6 +315,24 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         brainResults.pf_pc[trial, :]  = brain.getPF_PC()
     return final_traj, errorTot, brainResults
 
+def transform(traj, arm):
+    '''
+    for the baxter arm, ROS or gazebo or something the authors use
+    has a different rotation / origin then pinocchio. This function
+    takes points given in their world frame and transfroms them to 
+    pinocchio's 
+    Args:
+        traj: trajectory with pos 
+        arm: baxter arm
+    '''
+    traj.position = np.array([arm.applyTransform(p) for p in traj.position])
+    if traj.velocity is not None:
+        traj.velocity = np.array([arm.applyTransform(v, derivative=True) for v in traj.velocity])
+    if traj.acceleration is not None:
+        traj.acceleration = np.array([arm.applyTransform(a, derivative=True) for a in traj.acceleration])
+    return traj
+
+
 def fillTrajectory(traj, arm):
     """
     computes any missing derivates through getDerivatives()
@@ -546,24 +564,23 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     playVideo(time, trajectories, arm_ids, arm, illusoryArm)
 
+
 def test():
     '''
     temporary
     '''
-    trajFile   = "trajectories/circleTrajPos.csv" 
+    trajFile   = "trajectories/circleTrajPosCartesianOnly.csv" 
     armFile    = "baxter_description/urdf/baxter_fixed.urdf"
     package_dirs = ["./"] 
     arm = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs)
     traj_data           = load_trajectory(trajFile)   
+    traj_data           = transform(traj_data, arm)
     traj_data           = fillTrajectory(traj_data, arm)
     time                = traj_data.time
-    # print(traj_data.position)
-    # print(arm.getEEFromJoint(np.array([-0.76252975, -0.03976575, 0.033638525, 0.594384, -0.0174617, 1.014016])))
-    # print(arm.data.oMi[arm.model.getJointId("left_s0")].translation)
-    # print(arm.getEEFromJoint(pin.neutral(arm.model)))
-    # print(arm.getJointPosFromEE(np.array([0.81513, 1.010, 0.3209])))
+    print(arm.R, arm.t) 
+
     viz = initViz(arm)
-    downsamped_traj = traj_data.joint_position[::15]
+    downsamped_traj = traj_data.joint_position[::15] 
     while True:
         viz.play(downsamped_traj, 0.002*15)
 

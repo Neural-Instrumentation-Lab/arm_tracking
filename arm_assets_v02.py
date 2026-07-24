@@ -322,7 +322,7 @@ class dynamic_3dof_arm:
             J    = pin.getFrameJacobian(self.model, self.data, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
             Jdot = pin.getFrameJacobianTimeVariation(self.model, self.data, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
             qd = np.linalg.pinv(J) @ velocities[i, :] 
-            qdd = np.linalg.pinv(J) @ (accelerations[i,:] - Jdot @ velocities[i,:])
+            qdd = np.linalg.pinv(J) @ (accelerations[i,:] - Jdot @ qd)
             joint_vels[i, :] = qd
             joint_accs[i, :] = qdd
         return joint_pos, joint_vels, joint_accs 
@@ -416,10 +416,19 @@ class baxter_reduced(dynamic_3dof_arm):
         self.data = self.model.createData()
         self.njoints = 7 
         self.eeDes = np.array([0, 0, 0]) 
-        self.eeId = self.model.getFrameId("left_endpoint")
+        self.eeId = self.model.getFrameId("left_gripper")
+        # these are the rotational / translation shifts between pinocchio and ROS's coordinates. They can be recalculated
+        # with fit_rigid_transform 
+        self.R = np.array([[-9.99982203e-01,  5.88627211e-03,  9.72265375e-04],
+                           [-5.88789253e-03, -9.99981268e-01, -1.67226837e-03],
+                           [ 9.62403736e-04, -1.67796321e-03,  9.99998129e-01]]) 
+        self.t = np.array([1.3833375,0.57457608,-0.02481647])
+        print(self.eeId)
 
         # compute joint lengths for IK
         pin.framesForwardKinematics(self.model, self.data, pin.neutral(self.model))
+        print(self.data.oMf[self.eeId].translation)
+
         # Motor inertias, urdf files don't support these natively for some reason
         if disp:
             # print neutral config
@@ -432,49 +441,58 @@ class baxter_reduced(dynamic_3dof_arm):
             for name, oMi in zip(self.model.names, self.data.oMi):
                 print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
 
+    def fit_rigid_transform(self, A, B):
+        """
+        Find R, t such that R @ A[i] + t ≈ B[i] (least squares),
+        where A, B are Nx3 arrays of corresponding points.
+        Returns R (3x3), t (3,)
+        """
+        A = np.asarray(A)
+        B = np.asarray(B)
+        centroid_A = A.mean(axis=0)
+        centroid_B = B.mean(axis=0)
+        Ac = A - centroid_A
+        Bc = B - centroid_B
+
+        H = Ac.T @ Bc
+        U, S, Vt = np.linalg.svd(H)
+        R = Vt.T @ U.T
+
+        # Fix improper rotation (reflection) if det(R) < 0
+        if np.linalg.det(R) < 0:
+            Vt[-1, :] *= -1
+            R = Vt.T @ U.T
+
+        t = centroid_B - R @ centroid_A
+        self.R = R
+        self.t = t
+    
+    def applyTransform(self, data, derivative = False):
+        if derivative:
+            return self.R @ data
+        else:
+            return self.R @ data + self.t
+
     def getJointPosFromEE(self, pos, prevQ=np.array([0, 0, 0, 0, 0, 0, 0])):
-        '''
-        Inverse Kinematics for baxter left arm 
-        arm is too complex for analytical
-        so we do iterative method of solving
-        '''
-        refShoulPos = pin.SE3(np.eye(3), pos)
-        worldShoulder = self.data.oMi[self.model.getJointId("left_s0")].copy()
-        oMdes = pos + worldShoulder.translation 
         oMdes = pos
-        print(worldShoulder.translation)
-        print(oMdes)
-        # oMdes = pin.SE3(np.eye(3), pos)
-
-        q = prevQ 
-        eps = 1e-3 # converge to 
-        it_max = 100000
-        dt = 1e-1
-        damp = 1e-3
-        i=0
-
+        q = prevQ
+        eps = 1e-4
+        it_max = 1000
+        dt = 1e-1          # can likely go back up now that the direction/frame is correct
+        damp = 1e-12
+        i = 0
         while True:
             pin.forwardKinematics(self.model, self.data, q)
             pin.updateFramePlacements(self.model, self.data)
-
-            err = oMdes - self.data.oMf[self.eeId].translation 
-
+            err = oMdes - self.data.oMf[self.eeId].translation
             if np.linalg.norm(err) < eps:
                 success = True
-                print("converged")
                 break
             if i >= it_max:
                 success = False
                 break
-            J = pin.computeFrameJacobian(self.model, self.data, q, self.eeId, pin.LOCAL)[:3, :]
-            v = - J.T.dot(np.linalg.solve(J.dot(J.T) + damp * np.eye(3), err))
-            q = pin.integrate(self.model,q,v*dt)
-            if not i % 100:
-                print(self.data.oMf[self.eeId].translation - worldShoulder.translation)
-                print(np.linalg.norm(err))
+            J = pin.computeFrameJacobian(self.model, self.data, q, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
+            v = J.T.dot(np.linalg.solve(J.dot(J.T) + damp * np.eye(3), err))
+            q = pin.integrate(self.model, q, v * dt)
             i += 1
-
-        if success:
-            return q
-        else:
-            return None
+        return q if success else None

@@ -322,7 +322,7 @@ class dynamic_3dof_arm:
             J    = pin.getFrameJacobian(self.model, self.data, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
             Jdot = pin.getFrameJacobianTimeVariation(self.model, self.data, self.eeId, pin.LOCAL_WORLD_ALIGNED)[:3, :]
             qd = np.linalg.pinv(J) @ velocities[i, :] 
-            qdd = np.linalg.pinv(J) @ (accelerations[i,:] - Jdot @ velocities[i,:])
+            qdd = np.linalg.pinv(J) @ (accelerations[i,:] - Jdot @ qd)
             joint_vels[i, :] = qd
             joint_accs[i, :] = qdd
         return joint_pos, joint_vels, joint_accs 
