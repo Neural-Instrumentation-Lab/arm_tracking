@@ -347,7 +347,7 @@ def fillTrajectory(traj, arm):
         traj.joint_velocity, traj.joint_acceleration = getDerivatives(time, traj.joint_position, dx=traj.joint_velocity)
     return traj
 
-def playVideo(time, trajectories, arm_ids, arm, illusoryArm):
+def playVideo(time, trajectories, arm_ids, arm, illusoryArm, fps=30):
     """
     creates the visualizer through meshcat and prompts user
     to play the different trajectories 
@@ -387,7 +387,7 @@ def playVideo(time, trajectories, arm_ids, arm, illusoryArm):
         if prevChoice == 0 or arm_ids[userTraj] != arm_ids[prevChoice]:
             playArm = baxter_reduced(arm_ids[userTraj], pkgDirs=["./"], disp=False)
             viz = initViz(playArm)
-        viz.play(traj.pos, dt)
+        viz.play(traj.pos[::int(len(time)/(fps*time[-1]))], 1/fps)
         prevChoice = userTraj
 
 def movie(traj_no_error, final_traj, brainResults, time, nTrials, fname, joint=1):
