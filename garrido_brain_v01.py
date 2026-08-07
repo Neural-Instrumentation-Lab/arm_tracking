@@ -5,260 +5,322 @@ Ignacio Abadía , Francisco Naveros , Jesús A. Garrido , Eduardo Ros , and Nice
 """
 import numpy as np
 from dataclasses import dataclass
-
+from lif_neuron_v01 import LIFPopulation, NeuronParams
+from arm_assets_v02 import angle_diff
 class BrainError(Exception): pass
-
-@dataclass
-class NeuronParams:
-    """Per-neuron-type parameters"""
-    Cm: float = 1.0e-9        # membrane capacitance (F)
-    gL: float = 0.1e-6        # leak conductance (S)
-    EL: float = -70e-3        # resting potential, potential is reset to this (V)
-    E_AMPA: float = 0.0       # AMPA reversal potential (V)
-    E_GABA: float = -80e-3    # GABA reversal potential (V)
-    V_thr: float = -50e-3     # spike threshold (V)
-    T_ref: float = 1e-3       # absolute refractory period (s)
-    tau_AMPA: float = 1.0e-3  # AMPA time constant (s)
-    tau_NMDA: float = 20e-3   # NMDA time constant (s)
-    tau_GABA: float = 5.0e-3  # GABA time constant (s)
 
 # neuron parameters from table 2
 GC_params = NeuronParams(Cm=2.0e-12, gL=1.0e-9, EL=-65e-3, E_AMPA=0, tau_AMPA=1.0e-3, V_thr=-50.0e-3, T_ref=1.0e-3)
 PC_params = NeuronParams(Cm=100.0e-12, gL=6.0e-9, EL=-70e-3, E_AMPA=0, tau_AMPA=1.2e-3, V_thr=-52.0e-3, T_ref=2.0e-3)
 DCN_params = NeuronParams(Cm=2.0e-12, gL=0.2e-9, EL=-70e-3, E_AMPA=0, E_GABA=-80.0e-3, tau_AMPA=0.5e-3, tau_NMDA=14.0e-3,
-                           tau_GABA=10.0e-3, V_thr=-50.0e-3, T_ref=1.0e-3)
+                           tau_GABA=10.0e-3, V_thr=-40.0e-3, T_ref=1.0e-3)
 
-class lif_neuron:
-    def __init__(self, params: NeuronParams = None):
-        self.p = params
+class CFsubcomplex:
+    MAX_AMPLITUDE = 3          # input_current >= 0.75
+    MEDIUM_AMPLITUDE_UP = 3    # 0.50 < input_current < 0.75
+    MEDIUM_AMPLITUDE_DOWN = 2  # 0.25 < input_current <= 0.50
+    MIN_AMPLITUDE = 1          # input_current <= 0.25
+    MAX_SPIKE_FREQ = 10
 
-        # State variables
-        self.V = self.p.EL          # membrane potential
-        self.g_AMPA = 0.0           # AMPA conductance
-        self.g_NMDA = 0.0           # NMDA conductance
-        self.g_GABA = 0.0           # GABA conductance
-        self.refact_t = 0.0
-        self.spiked = False
- 
-        # Bookkeeping
-        self.spike_times = []
+    def __init__(self, n_neurons=50):
+        self.n_neurons = n_neurons
+        self.max_spk_freq = CFsubcomplex.MAX_SPIKE_FREQ
+        self.spikes_pending = np.zeros(n_neurons, dtype=np.int64)
+        self.last_spk_time = np.full(n_neurons, -np.inf)
         self.t = 0.0
+        self.rng = np.random.default_rng()
+
+    @classmethod
+    def burst_size(cls, I):
+        if I >= 0.75:
+            return cls.MAX_AMPLITUDE
+        elif I > 0.50:
+            return cls.MEDIUM_AMPLITUDE_UP
+        elif I > 0.25:
+            return cls.MEDIUM_AMPLITUDE_DOWN
+        else:
+            return cls.MIN_AMPLITUDE
+
+    def step(self, dt, inp_I):
+        spiked = self.spikes_pending > 0
+        self.spikes_pending[spiked] -= 1
+
+        idle = self.spikes_pending == 0
+        idle_idx = np.nonzero(idle)[0]
  
-    def _nmda_inf(self) -> float:
-        """Voltage-dependent NMDA activation gate, Eq. (10)."""
-        return (1.0 / (1.0 + np.exp(-62.0 * self.V))) * (1.2 / 3.57)
+        if idle_idx.size > 0:
+            readiness = (self.t - self.last_spk_time[idle_idx]) * self.max_spk_freq
+            np.clip(readiness, 0.0, 1.0, out=readiness)
  
-    def _decay_conductances(self, dt: float = 2e-3):
-        """Exponential decay of synaptic conductances between spike inputs. Eq (7-9)"""
-        self.g_AMPA *= np.exp(-dt / self.p.tau_AMPA)
-        self.g_NMDA *= np.exp(-dt / self.p.tau_NMDA)
-        self.g_GABA *= np.exp(-dt / self.p.tau_GABA)
+            p_trigger = readiness * inp_I * dt * self.max_spk_freq
+            draws = self.rng.random(size=idle_idx.size)
+            triggered_local = p_trigger > draws
+            triggered_idx = idle_idx[triggered_local]
  
-    def _apply_synaptic_inputs(self, ampa_weights, nmda_weights, gaba_weights):
-        """Add instantaneous conductance jumps from incoming spikes (Dirac
-        delta contributions in Eqs. 7-9)."""
-        if ampa_weights:
-            self.g_AMPA += sum(ampa_weights)
-        if nmda_weights:
-            self.g_NMDA += sum(nmda_weights)
-        if gaba_weights:
-            self.g_GABA += sum(gaba_weights)
- 
-    def step(self, dt: float = 2.0e-3, ampa_weights=(), nmda_weights=(), gaba_weights=()):
-        """
-        Args:
-        dt : float
-            Integration timestep in seconds (default 2ms)
-        ampa_weights, nmda_weights, gaba_weights : array of floats
-            Synaptic weights w_i for any presynaptic spikes arriving at this
-            receptor type during this timestep. Pass an empty tuple/list if
-            none arrived.
- 
-        Returns
-        bool
-            True if the neuron emitted a spike during this timestep.
-        """
-        p = self.p
-        self.spiked = False
- 
-        # Refractory period: membrane potential held at reset, no integration
-        if self.refact_t > 0.0:
-            self.refact_t = max(0.0, self.refact_t - dt)
-            # Conductances still decay / accumulate during refractory period
-            self._decay_conductances(dt)
-            self._apply_synaptic_inputs(ampa_weights, nmda_weights, gaba_weights)
-            self.t += dt
-            return False
- 
-        # 1: update conductances 
-        self._decay_conductances(dt)
-        self._apply_synaptic_inputs(ampa_weights, nmda_weights, gaba_weights)
- 
-        # compute currents 
-        I_int = -p.gL * (self.V - p.EL)
-        g_nmda_inf = self._nmda_inf()
-        I_ext = (
-            -(self.g_AMPA + self.g_NMDA * g_nmda_inf) * (self.V - p.E_AMPA)
-            - self.g_GABA * (self.V - p.E_GABA)
-        )
- 
-        # calculate membrane potential 
-        dV = (I_int + I_ext) / p.Cm * dt
-        self.V += dV
- 
-        # see if spiked
-        if self.V >= p.V_thr:
-            self.spiked = True
-            self.V = p.V_reset
-            self.refact_t = p.T_ref
-            self.spike_times.append(self.t)
+            if triggered_idx.size > 0:
+                num_spk = self.burst_size(inp_I)
+                self.spikes_pending[triggered_idx] = num_spk
+                self.last_spk_time[triggered_idx] = self.t + (num_spk + 1) * dt
  
         self.t += dt
-        return self.spiked
+        return spiked
 
+class PFSpikeHistory:
+    """
+    Bounded, prunable record of recent PF (GC) spikes, stored as a list of
+    (indices_array, spike_time) batches -- one batch per timestep that had
+    at least one PF spike. Sparse by construction (at most a handful of the
+    60,000 GCs fire per 2ms tick), so this stays small.
+    """
+    HISTORY_PRUNE_WINDOW = 200  # timesteps 
 
+    def __init__(self, prune_window=HISTORY_PRUNE_WINDOW):
+        self.prune_window = prune_window
+        self._idx_batches = []
+        self._times = []
+ 
+    def record(self, indices: np.ndarray, t: float):
+        if indices.size > 0:
+            self._idx_batches.append(indices)
+            self._times.append(t)
+ 
+    def prune(self, current_t: float):
+        cutoff = current_t - self.prune_window
+        keep = [i for i, t in enumerate(self._times) if t >= cutoff]
+        self._idx_batches = [self._idx_batches[i] for i in keep]
+        self._times = [self._times[i] for i in keep]
+ 
+    def flatten(self):
+        """Return (all_indices, all_spike_times) as parallel 1D arrays."""
+        if not self._idx_batches:
+            return (np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64))
+        idx = np.concatenate(self._idx_batches)
+        times = np.concatenate(
+            [np.full(a.size, t) for a, t in zip(self._idx_batches, self._times)]
+        )
+        return idx, times
+ 
+    def __len__(self):
+        return len(self._idx_batches)
+
+DK = 0.07          # kernel width parameter (s)
+TAU_LTD = 0.1      # kernel time constant, aligned with sensorimotor delay (s)
+def ltd_kernel(x, dk=DK, tau_ltd=TAU_LTD):
+    """
+    Eq. 13. x = t_PFspike - t_CFspike, i.e. how long BEFORE the CF spike a
+    PF fired (x <= 0). Nonzero only for x < -dk; peaks at x = -tau_ltd with
+    value 1.0; decays toward 0 for more negative x.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    out = np.zeros_like(x)
+    mask = x < -dk
+    z = (x[mask] + dk) / (tau_ltd - dk)
+    out[mask] = -z * np.exp(z + 1.0)
+    return out
+
+def restrictAngle(angle):
+    return ((angle + np.pi) % (2*np.pi)) - np.pi 
 
 class cerebellum:
-    def __init__(self, n_dof=2):
-        self.currPF = 0
-        self.nPFs = 500
-        self.pfIdx = 0
-        self.nMuscles = n_dof*2 # one pair agonist-antagonist per joint
-        self.purAct = np.zeros(self.nMuscles)
-        self.pcLookup = np.zeros(self.nPFs) 
-        self.pf_pc_weights = np.zeros((self.nPFs, self.nMuscles))
-        self.mf_dcn_weights = np.zeros(self.nMuscles)
-        self.pc_dcn_weights = np.zeros(self.nMuscles)
-        self.dcnAct = np.zeros(self.nMuscles)
-        self.pf_pc_only = False 
-        # from garrido paper
-        self.LTP_max = 0.01 # long-term potentiation
-        self.LTD_max = 0.02 # long-term depression 
-        self.LTP_max_dcn = 1e-3 # long-term potentiation
-        self.LTD_max_dcn = 1e-4 # long-term depression 
-        self.alpha = 1000 # LTP decay factor
-        self.active_pf_pc = True
-        self.active_pc_dcn = True
-        self.active_mf_dcn = True
+    DEFAULT_MF_VALUE_RANGES = (
+        (-1, 1),    # q      (actual position)
+        (-1.5, 1.5),    # qd     (actual velocity)
+        (-1, 1),    # q_des  (desired position)
+        (-1, 1),    # qd_des (desired velocity)
+    )
+    ALPHA = 0.002e-9          # (S)
+    BETA  = -0.005e-9         # (S)
+    INIT_PF_PC_WT = 1.6e-9    # (S)
+    W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
-    def granuleLayer(self, state):
-        '''
-        The granular layer translates the 
-        inputs to the parallel fibers,
-        which act as a state machine (discritizing the motion)
-        '''
-        self.pfIdx = (state - 1) % self.nPFs
-        self.currPF = (state) % self.nPFs 
-        #print(f"{self.pfIdx} {self.currPF}")
-        # if state >= self.nPFs:
-        #     raise BrainError("state is greater than the number of PFs")
+    def __init__(self, n_dof=6):
+        self.nJoints = n_dof
+        self.t = 0
+        # these numbers are all PER JOINT
+        self.nMF_subgroups    = 4
+        self.nMF_per_subgroup = 10
+        self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
+        self.W_MF_GC   = 0.18e-9 # constant weight when mf spikes (S)
+        self.W_PC_DCN  = 1e-9
+        self.W_MF_DCN   = 0.1e-9 
+        self.W_CF_DCN_AMPA  = 0.5e-9
+        self.W_CF_DCN_NMDA  = 0.25e-9
+        self.TORQUE_ALPHA  = [0.75, 3.0, 0.375, 1, 0.05, 0.05]
 
-    def updatePF_PC(self, error):
-        '''
-        updates the synaptic weights between the parallel fibers
-        and the purkinje cell
-        '''
-        self.pf_pc_weights[self.pfIdx,:] += (self.LTP_max / ((error+1)**self.alpha)) - self.LTD_max*error
-        self.pf_pc_weights[self.pfIdx,:] = np.clip(self.pf_pc_weights[self.pfIdx,:], 0, 1)
+        self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
+        self.nCF      = 100
+        self.nPC      = 100
+        self.nDCN     = 100
 
-    def purkinjeCompute(self):
-        '''
-        computes the purkinje cell firing rate [0 - 1]
-        '''
-        self.purAct = self.pf_pc_weights[self.currPF, :].copy() 
-        self.purAct = np.clip(self.purAct, 0, 1)
 
-    def getPC(self):
-        return self.purAct
+        # this AMPA input is constant from MF firing rate being constant
+        # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.nMF_subgroups*n_dof*self.W_MF_DCN
+        self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.W_MF_DCN
+        # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*0.12e-9
 
-    def getDCN(self):
-        return self.dcnAct
+        self.gcNeurons     = LIFPopulation(n=self.nGC * n_dof, params=GC_params)
+        self.mf_output     = np.zeros(self.nMF * n_dof, dtype=np.float64)
+        self.gc_ampa_input = np.zeros(self.nGC * n_dof, dtype=np.float64)
+        self.pf_history = PFSpikeHistory()
 
-    def updateMF_DCN(self):
-        '''
-        updates the synaptic weights between the mossy fibers and the 
-        deep cerebellar nuclei
-        '''
-        self.mf_dcn_weights += (self.LTP_max_dcn / ((self.purAct + 1)**self.alpha)) - self.LTD_max_dcn*self.purAct
-        self.mf_dcn_weights = np.clip(self.mf_dcn_weights, 0, None) 
+        self.CF_complexes  = [CFsubcomplex(n_neurons=int(self.nCF/2)) for _ in range(self.nJoints*2)] 
+        self.cf_output     = np.zeros(self.nCF * n_dof, dtype=np.bool)
 
-    def getMF_DCN(self):
-        return(self.mf_dcn_weights)
+        self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
+        self.pc_out = np.zeros(self.nPC * n_dof, dtype=bool)
 
-    def getPC_DCN(self):
-        return(self.pc_dcn_weights)
+        self.pcNeurons     = LIFPopulation(n=self.nPC * n_dof, params=PC_params)
+        self.dcnNeurons    = LIFPopulation(n=self.nDCN * n_dof, params=DCN_params)
 
-    def getPF_PC(self):
-        return(self.pf_pc_weights)
+        self.prevDCN       = np.zeros((15, self.nJoints))
 
-    def getnPFs(self):
-        return(self.nPFs)
+        self.timeStep = 2e-3
 
-    def setActiveSites(self, pf_pc, mf_dcn, pc_dcn):
-        self.active_mf_dcn = mf_dcn
-        self.active_pc_dcn = pc_dcn
-        self.active_pf_pc  = pf_pc
+        # pre-calculate a bunch of these values
+        self.kernelLookup = self.makeKernelLookup() 
 
-    def updatePC_DCN(self):
-        '''
-        updates the weights between the purkinje cell
-        and the deep cerebellar nuclei
-        '''
-        dcn_clipped = np.clip(self.dcnAct, 0, 1)
-        self.pc_dcn_weights += ((self.LTP_max_dcn * self.purAct**self.alpha) * (1 - 1/(dcn_clipped + 1)**self.alpha)) - self.LTD_max_dcn*(1-self.purAct)
-        self.pc_dcn_weights = np.clip(self.pc_dcn_weights, 0, None) 
 
-    def DCNCompute(self):
-        '''
-        computes the deep cerebellar nuclei's activation,
-        which is the torque outputs (for each muscle)
-        '''
-        self.dcnAct = self.mf_dcn_weights - self.purAct*self.pc_dcn_weights 
-        self.dcnAct = np.clip(self.dcnAct, 0, None)
+    def makeKernelLookup(self):
+        table = {}
+        for x in np.arange(0, -201, -1):
+            table[x] = ltd_kernel(x*self.timeStep)
+        return table
 
-    def dcnToTorque(self):
-        '''
-        takes the DCN's output and adds antagonist and agonist together
-        to make joint torque commands
-        '''
-        corr = self.dcnAct.copy()
-        corr[1::2] *= -1
-        corr = (corr).reshape(-1, 2).sum(axis=1) 
-        return corr
+    def encode_mf_address(self, state, value_ranges=DEFAULT_MF_VALUE_RANGES):
+        """
+        Convert (q, qd, q_des, qd_des) into 4 digits in [0, 9], one per MF
+        subgroup, via uniform binning.
+        Returns
+        -------
+        tuple of 4 ints, each in [0, N_MF_PER_SUBGROUP - 1]
+        """
+        digits = []
+        for value, (lo, hi) in zip(state, value_ranges):
+            frac = (value - lo) / (hi - lo)
+            digit = int(frac * self.nMF_per_subgroup)
+            digit = int(np.clip(digit, 0, self.nMF_per_subgroup - 1))  
+            digits.append(digit)
+        return tuple(digits)
+
+    def address_to_gc_index(self, digits, nJoint):
+        """Combine 4 base-10 digits into a single GC index in [0, 9999]."""
+        d0, d1, d2, d3 = digits
+        return (d0 + d1 * self.nMF_per_subgroup + d2 * self.nMF_per_subgroup**2 + d3 * self.nMF_per_subgroup**3) + nJoint*self.nGC
+
+    def granularLayer(self, q, qd, qdes, qddes, dt):
+        self.gc_ampa_input.fill(0.0)
+
+        for j in range(self.nJoints):
+            digits = self.encode_mf_address((q[j], qd[j], qdes[j], qddes[j]), cerebellum.DEFAULT_MF_VALUE_RANGES)
+            addressed_index = self.address_to_gc_index(digits, j)
+            self.gc_ampa_input[addressed_index] = self.W_MF_GC * self.nMF_subgroups
+        self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
+
+    def errorCalc(self, error):
+        max_error = 1 
+        return 0.2+0.8*(1-np.exp(-error*90/max_error));
+
+    def climbingFibers(self, qErr, qdErr, dt):
+        self.cf_output.fill(False)
+        kp = np.ones(self.nJoints)*0.5
+        kd = np.ones(self.nJoints)*0.5/(2*np.pi)
+        sigError = kp * (qErr) + kd * (qdErr)
+        pError = self.errorCalc(sigError)
+        nError = self.errorCalc(-sigError)
+        agonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
+        antagonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
+        for j in range(self.nJoints):
+            epsAgon  = agonist[j]
+            epsAAgon = antagonist[j]
+            startIdx = int(j * self.nCF)
+            self.cf_output[startIdx:startIdx+int(self.nCF/2)] = self.CF_complexes[j*2].step(dt, epsAgon)
+            self.cf_output[startIdx+int(self.nCF/2):startIdx+int(self.nCF)]  = self.CF_complexes[j*2+1].step(dt, epsAAgon)
+
+    def update_pf_pc_weights(self, pf_pc_wts, pf_spike_idx, cf_spike_idx, current_t, history):
+        """
+        Advance PF-PC weights by one timestep's worth of LTP + LTD.
     
-    def compute(self, qError, qdError, state):
-        '''
-        updates the entire brain given the error signals
-        '''
-        # combine errors
-        if state == 0:
-            # no learning, just computation on first state
-            self.currPF = 0
-            self.purkinjeCompute()
-            self.DCNCompute()
-            return self.dcnToTorque()
-        self.granuleLayer(state)
-        posCon = np.ones(int(self.nMuscles/2))
-        velCon = np.ones(int(self.nMuscles/2))
-        error = posCon*qError + velCon*qdError 
-        # error = np.tanh(error)
-        agonist = np.maximum(error, 0)
-        antagonist = np.maximum(-error, 0)
-        error = np.stack([agonist, antagonist], axis=1).reshape(-1)  # (n_muscles,)
-        error = np.clip(error, 0, 1) 
-        #error = np.tanh(error) # clips errors to 0 - 1 BUT I DONT LIKE IT
-        # for agonist / antagonist pairs
-        if self.active_pf_pc:
-            self.updatePF_PC(error)
-        self.purkinjeCompute()
-        if self.active_mf_dcn:
-            self.updateMF_DCN()
-        if self.active_pc_dcn:
-            self.updatePC_DCN()
-        self.DCNCompute()
-        return self.dcnToTorque()
+        Parameters
+        ----------
+        pf_pc_wts : np.ndarray, shape (n_gc_total, n_pc_total)
+            Weight matrix, modified IN PLACE.
+        pf_spike_idx : np.ndarray of int
+            Flat GC/PF indices that fired THIS timestep.
+        cf_spike_idx : np.ndarray of int
+            Flat CF indices that fired THIS timestep -- assumed to equal the PC
+            column index each maps to (one-to-one CF-PC connectivity per Table I).
+        current_t : float
+            Current simulation time; CF spikes this call are treated as
+            occurring exactly at current_t.
+        history : PFSpikeHistory
+            Persistent across calls -- pass the same object every timestep.
+        """
+        # --- LTP: fixed jump of ALPHA at every PF spike, applied to ALL PC
+        #     columns (every PF connects to every PC). No dt factor -- this is
+        #     a discrete per-spike jump (Eq. 11's Dirac delta), not a rate. ---
+        if pf_spike_idx.size > 0:
+            pf_pc_wts[pf_spike_idx, :] += cerebellum.ALPHA
+            pf_pc_wts[pf_spike_idx, :] = np.clip(pf_pc_wts[pf_spike_idx, :], cerebellum.W_MIN, cerebellum.W_MAX)
+    
+        # --- Record this step's PF spikes for future LTD lookups, then prune
+        #     anything old enough to be kernel-negligible. ---
+        history.record(pf_spike_idx, current_t)
+        history.prune(current_t)
+    
+        # --- LTD: every CF spike this step looks back at PF history and applies
+        #     a kernel-weighted decrement, restricted to that CF's own PC column. ---
+        if cf_spike_idx.size > 0:
+            hist_idx, hist_time = history.flatten()
+            if hist_idx.size > 0:
+                x = hist_time - current_t  
+                # k_vals = ltd_kernel(x)
+                k_vals = np.array([self.kernelLookup[x_val] for x_val in x])
+                nonzero = k_vals != 0.0
+                if np.any(nonzero):
+                    rows = hist_idx[nonzero]
+                    k_nonzero = k_vals[nonzero]
+                    # Outer-expand (history rows) x (currently-firing CF columns).
+                    # np.add.at is required (not fancy-index +=) because `rows`
+                    # can contain duplicates -- the same GC may appear in
+                    # multiple history batches, and each occurrence must
+                    # contribute its own kernel-weighted term; plain fancy
+                    # assignment silently drops repeated-index contributions.
+                    R = np.repeat(rows, cf_spike_idx.size)
+                    C = np.tile(cf_spike_idx, rows.size)
+                    V = np.repeat(cerebellum.BETA * k_nonzero, cf_spike_idx.size)
+                    np.add.at(pf_pc_wts, (R, C), V)
+                    pf_pc_wts[R, C] = np.clip(pf_pc_wts[R, C], cerebellum.W_MIN, cerebellum.W_MAX)
 
-    def loadWts(self, init_pf_pc, init_mf_dcn, init_pc_dcn):
-        self.pf_pc_weights  = init_pf_pc
-        self.mf_dcn_weights = init_mf_dcn
-        self.pc_dcn_weights = init_pc_dcn
+    def PCstep(self, dt):
+        pf_idx = np.nonzero(self.pfs)[0]
+        cf_idx = np.nonzero(self.cf_output)[0]
+        self.update_pf_pc_weights(self.pf_pc_wts, pf_idx, cf_idx, current_t=self.t, history=self.pf_history)
+        pc_ampa_inp = np.sum(self.pf_pc_wts[pf_idx], axis=0)
+        self.pc_out = self.pcNeurons.step(dt=dt, ampa_input=pc_ampa_inp)
+
+    def dcnToTorque(self, dcnOut, dt):
+        fix = dcnOut.reshape(self.nJoints*2, -1)
+        torques = np.sum(dcnOut.reshape(self.nJoints*2, -1), axis=1)
+        torques[1::2] *= -1
+        torques = np.sum(torques.reshape(-1, 2), axis=1)
+        self.prevDCN[:-1] = self.prevDCN[1:]
+        self.prevDCN[-1] = torques
+        corr = (self.TORQUE_ALPHA) * np.mean(self.prevDCN, axis=0)
+        return corr
+
+    def compute(self, q, qd, qdes, qddes, qErr, qdErr, dt=2e-3):
+        # input fiber layers
+        self.granularLayer(restrictAngle(q), qd, restrictAngle(qdes), qddes, dt)
+        self.climbingFibers(qErr, qdErr, dt)
+        # now we have spikes from the PFs and the CFs in cf_output and pfs
+        self.PCstep(dt)
+        dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
+                             nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
+                             gaba_input=(self.pc_out*self.W_PC_DCN))
+        if dcnOut[150:199].any():
+            pass 
+        # if not dcnOut.all() and dcnOut.any():
+        #     print("waaaaaah")
+        corr = self.dcnToTorque(dcnOut, dt)
+        self.t += 1
+        return(corr)

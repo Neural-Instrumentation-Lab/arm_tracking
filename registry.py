@@ -18,7 +18,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         Experiment(
             name="test",
             description="trying out baxter",
-            trajectory=TRAJS / "circleTrajPos.csv",
+            trajectory=TRAJS / "circleTrajInterp.csv",
             actualArm=ARMS / "baxter_fixed.urdf",
             illusoryArm=ARMS / "baxter_fixed.urdf",
             results=RESUL / "test.pkl",
@@ -26,8 +26,23 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "test.png",
             videos=VIDEO / "test.mp4",
             nDof=7,
+            nTrials=10,
+            load_weight_groups = (),
+        ),
+        Experiment(
+            name="test2",
+            description="simple 2dof arm for brain test",
+            trajectory=TRAJS / "traj_004.csv",
+            actualArm=ARMS / "arm_2dof.urdf",
+            illusoryArm=ARMS / "baxter_fixed.urdf",
+            results=RESUL / "test2.pkl",
+            finalWts=WTS / "test2.npz",
+            graphs=GRAPH / "test2.png",
+            videos=VIDEO / "test2.mp4",
+            nDof=2,
             nTrials=1,
             load_weight_groups = (),
         ),
+
     ]
 }

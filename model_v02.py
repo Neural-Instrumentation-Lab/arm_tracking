@@ -26,6 +26,7 @@ from experiment_assets import load_trajectory, load_weights, save_weights, prepa
 import matplotlib.animation as animation
 from matplotlib.gridspec import GridSpec
 from pathlib import Path
+from collections import deque
 
 matplotlib.use('TkAgg')
 
@@ -59,58 +60,83 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
         errDistNoBrain:         distance errors without brain
         errDistBrain:           distance errors with brain
     '''
-    # choose to plot the 3rd joint plot based on ndof
-    if nDof == 3:
-        fig, axs = plt.subplots(5, 1, figsize=(12, 10), sharex=True)
-    else:
-        fig, axs = plt.subplots(4, 1, figsize=(12, 10), sharex=True)
     # calculating errors
     errDistBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.eePos,  final_traj.eePos[-1,:])]
     errDistNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.eePos,  cntrl_traj.eePos)]
     errTorqNoBrain     = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  cntrl_traj.torq)]
     errTorqBrain       = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.torq,  final_traj.torq[-1, :])]
-    # plot joint 1 torque
-    pltN = 0
-    axs[pltN].plot(time, traj_no_error.torq[:,0] - traj_w_error.torq[:,0], linewidth=2, linestyle='--')
-    axs[pltN].plot(time, final_traj.torq[-1, :,0] - traj_w_error.torq[:,0], linewidth=2)
-    axs[pltN].set_title("Joint 1 Corrective Torque")
-    axs[pltN].set_ylabel("Torque")
-    axs[pltN].legend(["Ideal", "Brain"])
-    axs[pltN].grid(True)
-    # plot joint 2 torque
-    pltN += 1
-    axs[pltN].plot(time, traj_no_error.torq[:,1] - traj_w_error.torq[:,1], linewidth=2, linestyle='--')
-    axs[pltN].plot(time, final_traj.torq[-1, :,1] - traj_w_error.torq[:,1], linewidth=2)
-    axs[pltN].set_title("Joint 2 Corrective Torque")
-    axs[pltN].set_ylabel("Torque")
-    axs[pltN].legend(["Ideal", "Brain"])
-    axs[pltN].grid(True)
-    # plot joint 3 torque
-    if nDof == 3:
-        pltN += 1
-        axs[pltN].plot(time, traj_no_error.torq[:,2] - traj_w_error.torq[:,2], linewidth=2, linestyle='--')
-        axs[pltN].plot(time, final_traj.torq[-1, :,2] - traj_w_error.torq[:,2], linewidth=2)
-        axs[pltN].set_title("Joint 3 Corrective Torque")
-        axs[pltN].set_ylabel("Torque")
-        axs[pltN].legend(["Ideal", "Brain"])
-        axs[pltN].grid(True)
-    # plot total absolute mean torque error
-    pltN += 1
-    axs[pltN].plot(time, errTorqNoBrain, linewidth=2)
-    axs[pltN].plot(time, errTorqBrain, linewidth=2)
-    axs[pltN].set_title("Torque Error")
-    axs[pltN].set_ylabel("||τ_des - τ_actual||")
-    axs[pltN].legend(["No Brain Error", "Brain Error"])
-    axs[pltN].grid(True)
-    # plot total absolute mean distance error
-    pltN += 1
-    axs[pltN].plot(time, errDistNoBrain, linewidth=2)
-    axs[pltN].plot(time, errDistBrain, linewidth=2)
-    axs[pltN].set_title("Distance Error")
-    axs[pltN].set_xlabel("Time")
-    axs[pltN].set_ylabel("ee distance error")
-    axs[pltN].legend(["No Brain Error", "Brain Error"])
-    axs[pltN].grid(True)
+
+    fig = plt.figure(figsize=(14, 8), constrained_layout=True)
+    gs = fig.add_gridspec(3, 2, width_ratios=[2.5, 1])
+
+    # Large plot on the left
+    ax_pos = fig.add_subplot(gs[:, 0])
+
+    # Three smaller plots on the right
+    ax_t1 = fig.add_subplot(gs[0, 1])
+    ax_t2 = fig.add_subplot(gs[1, 1])
+    ax_err = fig.add_subplot(gs[2, 1])
+
+    ax_t1.plot(time, traj_no_error.torq[:, 0], '--', lw=2)
+    ax_t1.plot(time, final_traj.torq[-1, :, 0], lw=2)
+    ax_t1.set_title("Joint 1 Corrective Torque")
+    ax_t1.set_ylabel("Torque")
+    ax_t1.legend(["Ideal", "Brain"])
+    ax_t1.grid(True)
+    ax_t1.tick_params(labelbottom=False)
+
+    ax_t2.plot(time, traj_no_error.torq[:, 1], '--', lw=2)
+    ax_t2.plot(time, final_traj.torq[-1, :, 1], lw=2)
+    ax_t2.set_title("Joint 2 Corrective Torque")
+    ax_t2.set_ylabel("Torque")
+    ax_t2.legend(["Ideal", "Brain"])
+    ax_t2.grid(True)
+    ax_t2.tick_params(labelbottom=False)
+    ax_t2.sharex(ax_t1)
+
+    colors = plt.cm.tab10.colors   # or plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    leg = []
+
+    for j in range(nDof - 1):
+        c = colors[j % len(colors)]
+
+        ax_pos.plot(
+            time,
+            traj_no_error.torq[:, j],
+            '--',
+            color=c,
+            lw=2,
+        )
+
+        ax_pos.plot(
+            time,
+            final_traj.torq[-1, :, j],
+            '-',
+            color=c,
+            lw=2,
+        )
+
+        leg.extend([
+            f"Joint {j+1} Ideal",
+            f"Joint {j+1} Actual"
+        ])
+
+    ax_pos.set_title("Joint Positions")
+    ax_pos.set_ylabel("Joint Position (rad)")
+    ax_pos.set_xlabel("Time")
+    ax_pos.grid(True)
+    ax_pos.legend(leg, ncol=2)
+    ax_pos.legend(leg, loc="center left", bbox_to_anchor=(1.02, 0.5))
+
+    ax_err.plot(time, errDistNoBrain, lw=2)
+    ax_err.plot(time, errDistBrain, lw=2)
+    ax_err.set_title("Distance Error")
+    ax_err.set_xlabel("Time")
+    ax_err.set_ylabel("EE Distance Error")
+    ax_err.legend(["No Brain", "Brain"])
+    ax_err.grid(True)
+    ax_err.sharex(ax_t1)
 
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
@@ -260,8 +286,8 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     '''
     # initialize the trajectory
     currPos       = traj_w_error.pos[0,:] 
-    currVel       = traj_w_error.vel[0,:] 
-    currAcc       = traj_w_error.acel[0,:] 
+    currVel       = traj_w_error.vel[0,:]
+    currAcc       = traj_w_error.acel[0,:]
     arm.move(currPos, currVel, currAcc)
     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
                             torq=np.zeros((nTrials, len(time), arm.njoints)),
@@ -271,49 +297,81 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     corrTorque = np.zeros_like(currPos)
     torrPd = np.zeros_like(currPos)
     errorTot = np.zeros(nTrials)
-    brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
-    state = 0
-    step = np.floor(len(time) / brain.getnPFs())
+    # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
+    step = int(round(len(time) / (np.floor(time[-1] / brain.timeStep) + 1), 0))
+    print(step)
     # PD Constants
     kp = np.ones(arm.njoints)*0
     kd = 2*np.sqrt(kp)
+    qMin = arm.model.lowerPositionLimit
+    qMax = arm.model.upperPositionLimit
+    qdMax = arm.model.velocityLimit
+    tauMax = arm.model.effortLimit
+    # brain commands and inputs stored for delay
+    delEff = int(round(50e-3 * (len(time) / time[-1])))
+    delAff = int(round(50e-3 * (len(time) / time[-1])))
+    errSig = (np.zeros_like(currPos), np.zeros_like(currVel))
+    qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
+    torSig = np.zeros_like(corrTorque)
+    prevErrors = deque()
+    prevPos = deque()
+    prevComm = deque()
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
             qError  = angle_diff(traj_w_error.pos[i], currPos)
             qdError = traj_w_error.vel[i] - currVel
+            prevErrors.append((qError.copy(), qdError.copy()))
+            prevPos.append((currPos.copy(), currVel.copy(), traj_w_error.pos[i].copy(), traj_w_error.vel[i].copy()))
+            if trial != 0 or i >= delEff:
+                errSig = prevErrors.popleft()
+                qSig = prevPos.popleft()
             # compute corrections, but brain only fires once for every PF
             if i % step ==0:
-                corrTorque = brain.compute(qError, qdError, state)
-                state += 1
+                corr = brain.compute(qSig[0][:6], qSig[1][:6], traj_w_error.pos[i, :6], 
+                                    traj_w_error.vel[i, :6], (errSig[0])[:6], (errSig[1])[:6]) 
+                prevComm.append(np.concat((corr, [0])))
+                if trial != 0 or i >= delAff:
+                    corrTorque = prevComm.popleft()
+                # corrTorque[6] = torque[6] # this is for the joint not controlled by the brain
+            finalTorque = corrTorque
+            np.clip(finalTorque, -tauMax, tauMax, out=finalTorque)
             torrPd = kp*(qError) + kd*(qdError)
             # move the arm
-            currAcc = arm.forward(currPos, currVel, torque + corrTorque + torrPd)
+            currAcc = arm.forward(currPos, currVel, finalTorque)
             if i > 0:
                 dt      = time[i] - time[i-1]
                 currVel = (currVel + currAcc *dt)
+                np.clip(currVel, -qdMax, qdMax, out=currVel)
                 currPos = pin.integrate(arm.model, currPos, currVel * dt)
+            np.clip(currPos, qMin, qMax, out=currPos)
             arm.move(currPos, currVel, currAcc)
+            # pinocchio does not automatically clamp joints to their limits
+            # so we gotta do it ourselves
             # store results for plotting
             final_traj.pos[i,:]   = currPos
-            brainResults.pc[trial, i,:]  = brain.getPC()
-            brainResults.dcn[trial, i,:] = brain.getDCN()
+            final_traj.vel[i,:]   = currVel
+            # brainResults.pc[trial, i,:]  = brain.getPC()
+            # brainResults.dcn[trial, i,:] = brain.getDCN()
             final_traj.eePos[trial, i,:] = arm.getPos()
-            final_traj.torq[trial, i] = torque + corrTorque + torrPd
+            final_traj.torq[trial, i] = corrTorque
             if trial == nTrials-1:
-                final_traj.vel[i,:]   = currVel
                 final_traj.acel[i,:]  = currAcc
+        print(f"q_min: {final_traj.pos.min(axis=0)} q_max: {final_traj.pos.max(axis=0)}")
+        print(f"qd_min: {final_traj.vel.min(axis=0)} qd_max: {final_traj.vel.max(axis=0)}")
         # reset between each trial
-        currPos          = traj_w_error.pos[0,:] 
-        currVel          = traj_w_error.vel[0,:] 
-        currAcc          = traj_w_error.acel[0,:] 
-        arm.move(currPos, currVel, currAcc)
+        # currPos          = traj_w_error.pos[0,:] 
+        # currVel          = traj_w_error.vel[0,:]
+        # currAcc          = traj_w_error.acel[0,:]
+        # arm.move(currPos, currVel, currAcc)
         # store for plotting
-        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
-        brainResults.mf_dcn[trial, :] = brain.getMF_DCN()
-        brainResults.pc_dcn[trial, :] = brain.getPC_DCN()
-        brainResults.pf_pc[trial, :]  = brain.getPF_PC()
-    return final_traj, errorTot, brainResults
+        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos[:-1],  final_traj.pos[:-1])])
+        # brainResults.mf_dcn[trial, :] = brain.getMF_DCN()
+        # brainResults.pc_dcn[trial, :] = brain.getPC_DCN()
+        # brainResults.pf_pc[trial, :]  = brain.getPF_PC()
+    touched = brain.pf_pc_wts[brain.pf_pc_wts != cerebellum.INIT_PF_PC_WT]
+    print(f"Touched entries: {touched.size}")
+    return final_traj, errorTot
 
 def transform(traj, arm):
     '''
@@ -503,7 +561,8 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs)
     illusoryArm = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs) # not needed in this version
     # brain           = gc.Cerebellum(arm.njoints) 
-    brain           = cerebellum(n_dof=arm.njoints)
+    # -1 joint because joint w2 is uncontrolled by the brain
+    brain           = cerebellum(n_dof=arm.njoints - 1)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
@@ -528,14 +587,22 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     traj_no_error.torq, _                 = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
 
     # loading initial brain weights and setting plasticity
-    plastic, wts = prepare_brain_weights(exp)
-    brain.setActiveSites(plastic["pf_pc"], plastic["mf_dcn"], plastic["pc_dcn"])
-    if wts is not None:
-        brain.loadWts(wts.pf_pc, wts.mf_dcn, wts.pc_dcn)
+    # plastic, wts = prepare_brain_weights(exp)
+    # brain.setActiveSites(plastic["pf_pc"], plastic["mf_dcn"], plastic["pc_dcn"])
+    # if wts is not None:
+        # brain.loadWts(wts.pf_pc, wts.mf_dcn, wts.pc_dcn)
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot, brainResults = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+    final_traj, errorTot = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(projection='3d')
+    # y= np.arange(len(brain.pf_pc_wts))
+    # x= np.arange(len(brain.pf_pc_wts[0]))
+    # (x, y) = np.meshgrid(x, y)
+    # surf = ax.plot_surface(x, y, brain.pf_pc_wts, cmap='viridis', edgecolor='none')
+
     # no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
     
@@ -544,15 +611,31 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: illFile}
     if save:
         save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
-        save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
+        # save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
+    wts = brain.pf_pc_wts
+    print(wts.min())
+    print(wts.max())
+    plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
+    plt.colorbar()
+    plt.show()
 
     # plotting 
-    errJointNoBrain    = [np.linalg.norm(des - act) for (des,act) in zip(traj_no_error.pos,  cntrl_traj.pos)]
+    errJointNoBrain    = [np.linalg.norm(des - act)/(n_dof-1) for (des,act) in zip(traj_no_error.pos[:6],  cntrl_traj.pos[:6])]
     plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
-    plot_brain_results(errorTot, errJointNoBrain, brainResults, time, show=showOutput, saveLoc=exp.graphs, save=save)
+    # plot_brain_results(errorTot, errJointNoBrain, brainResults, time, show=showOutput, saveLoc=exp.graphs, save=save)
 
-    if makeMovie:
-        movie(traj_no_error, final_traj, brainResults, time, exp.nTrials, "results/videos/"+exp.name+".mp4")
+    fig, axs = plt.subplots()
+    pltN = 0
+    axs.plot(errorTot/(len(time)*(n_dof-1)))
+    axs.set_xlabel("Trial")
+    axs.set_ylabel("Mean Absolute Error")
+    axs.set_title("Evolution of MAE")
+    axs.axhline(np.sum(errJointNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
+    axs.legend(["Brain Error", "No Brain Error"])
+    plt.show()
+
+    # if makeMovie:
+    #     movie(traj_no_error, final_traj, brainResults, time, exp.nTrials, "results/videos/"+exp.name+".mp4")
 
     if not showOutput:
         print("Simulation Complete...")

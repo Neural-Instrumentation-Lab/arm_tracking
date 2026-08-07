@@ -243,7 +243,7 @@ class dynamic_3dof_arm:
             cntrl_traj.eePos[i, :] = self.getPos()
         return cntrl_traj
 
-    def inverseDynamics(self, positions, velocities, accels, time, n_substeps=100):
+    def inverseDynamics(self, positions, velocities, accels, time, n_substeps=100, grav_corr=False):
         '''
         creates the ideal torques along a given trajectory
         filtered through a PD controller to reduce numerical error
@@ -275,6 +275,8 @@ class dynamic_3dof_arm:
                 acc = self.forward(pos, vel, torque)
                 vel = vel + acc * dt
                 pos = pin.integrate(self.model, pos, vel * dt)
+            if grav_corr:
+                torquesPD[i,:] = torquesPD[i,:] - pin.computeGeneralizedGravity(self.model, self.data, pos)
             self.move(pos, vel, acc)
             eePos[i,:] = self.getPos()
         return torquesPD, eePos
