@@ -16,6 +16,7 @@ DCN_params = NeuronParams(Cm=2.0e-12, gL=0.2e-9, EL=-70e-3, E_AMPA=0, E_GABA=-80
                            tau_GABA=10.0e-3, V_thr=-40.0e-3, T_ref=1.0e-3)
 
 class CFsubcomplex:
+    # from C_interface_for_robot_control.cpp
     MAX_AMPLITUDE = 3          # input_current >= 0.75
     MEDIUM_AMPLITUDE_UP = 3    # 0.50 < input_current < 0.75
     MEDIUM_AMPLITUDE_DOWN = 2  # 0.25 < input_current <= 0.50
@@ -64,6 +65,39 @@ class CFsubcomplex:
  
         self.t += dt
         return spiked
+
+class CFsubcomplexALT:
+    # from ROSPoissonGenerator.cpp 
+    SIGMA = 1
+    MIN_SPIKE_FREQ = 1
+    MAX_SPIKE_FREQ = 10
+    MIN_ERROR = 0.001
+    MAX_ERROR = 0.01
+
+    def __init__(self, n_neurons=50):
+        self.n_neurons = n_neurons
+        self.centers = np.linspace(CFsubcomplexALT.MIN_ERROR, CFsubcomplexALT.MAX_ERROR, num=n_neurons) 
+        self.widths = np.ones_like(self.centers) * CFsubcomplexALT.SIGMA*(CFsubcomplexALT.MAX_ERROR - CFsubcomplexALT.MIN_ERROR)/(n_neurons-1)
+        self.rng = np.random.default_rng()
+        self.spikes_pending = np.zeros(n_neurons, dtype=np.int64)
+
+    def step(self, dt, inp_I):
+        spiked = self.spikes_pending > 0
+        self.spikes_pending[spiked] -= 1
+
+        idle = self.spikes_pending == 0
+        idle_idx = np.nonzero(idle)[0]
+
+        norm_rof = (np.tanh((inp_I - self.centers) / self.widths) + 1) * 0.5 
+        sp_rof = CFsubcomplexALT.MIN_SPIKE_FREQ + norm_rof[idle_idx]*(CFsubcomplexALT.MAX_SPIKE_FREQ - CFsubcomplexALT.MIN_SPIKE_FREQ)
+        draws = self.rng.random(size=idle_idx.size)
+        triggered = sp_rof*dt >= draws
+        triggered_idx = idle_idx[triggered]
+        self.spikes_pending[triggered_idx] = inp_I / (self.centers[triggered_idx])
+        self.spikes_pending[triggered_idx] = np.clip(self.spikes_pending[triggered_idx], 1, 6)
+
+        return spiked
+
 
 class PFSpikeHistory:
     """
@@ -129,7 +163,7 @@ class cerebellum:
         (-1, 1),    # qd_des (desired velocity)
     )
     ALPHA = 0.002e-9          # (S)
-    BETA  = -0.005e-9         # (S)
+    BETA  = -0.001e-9         # (S)
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
@@ -140,12 +174,12 @@ class cerebellum:
         self.nMF_subgroups    = 4
         self.nMF_per_subgroup = 10
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
-        self.W_MF_GC   = 0.18e-9 # constant weight when mf spikes (S)
+        self.W_MF_GC   = 0.18e-9 
         self.W_PC_DCN  = 1e-9
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        self.TORQUE_ALPHA  = [0.75, 3.0, 0.375, 1, 0.05, 0.05]
+        self.TORQUE_ALPHA  = [0.75, 3.0, 0.375, 1.5, 0.05, 0.05]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -163,7 +197,7 @@ class cerebellum:
         self.gc_ampa_input = np.zeros(self.nGC * n_dof, dtype=np.float64)
         self.pf_history = PFSpikeHistory()
 
-        self.CF_complexes  = [CFsubcomplex(n_neurons=int(self.nCF/2)) for _ in range(self.nJoints*2)] 
+        self.CF_complexes  = [CFsubcomplexALT(n_neurons=int(self.nCF/2)) for _ in range(self.nJoints*2)] 
         self.cf_output     = np.zeros(self.nCF * n_dof, dtype=np.bool)
 
         self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
@@ -215,6 +249,16 @@ class cerebellum:
             addressed_index = self.address_to_gc_index(digits, j)
             self.gc_ampa_input[addressed_index] = self.W_MF_GC * self.nMF_subgroups
         self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
+        # self.gc_ampa_input = self.gc_ampa_input.reshape((self.nJoints, self.nMF_per_subgroup, self.nMF_per_subgroup, self.nMF_per_subgroup, self.nMF_per_subgroup))
+        # for j in range(self.nJoints):
+        #     digits = self.encode_mf_address((q[j], qd[j], qdes[j], qddes[j]), cerebellum.DEFAULT_MF_VALUE_RANGES)
+        #     # addressed_index = self.address_to_gc_index(digits, j)
+        #     self.gc_ampa_input[j, digits[0], :, :, :] += self.W_MF_GC
+        #     self.gc_ampa_input[j, :, digits[1], :, :] += self.W_MF_GC
+        #     self.gc_ampa_input[j, :, :, digits[2], :] += self.W_MF_GC
+        #     self.gc_ampa_input[j, :, :, :, digits[3]] += self.W_MF_GC
+        # self.gc_ampa_input = self.gc_ampa_input.reshape(-1)
+        # self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
 
     def errorCalc(self, error):
         max_error = 1 
@@ -222,11 +266,15 @@ class cerebellum:
 
     def climbingFibers(self, qErr, qdErr, dt):
         self.cf_output.fill(False)
-        kp = np.ones(self.nJoints)*0.5
-        kd = np.ones(self.nJoints)*0.5/(2*np.pi)
+        kp = np.array([1.5, 2, 3, 2, 3, 3])
+        kd = np.array([1.5, 1, 3, 1, 3, 0.5])
+        # kp = np.ones(self.nJoints)*0.5
+        # kd = np.ones(self.nJoints)*0.5/(2*np.pi)
         sigError = kp * (qErr) + kd * (qdErr)
-        pError = self.errorCalc(sigError)
-        nError = self.errorCalc(-sigError)
+        # pError = self.errorCalc(sigError)
+        # nError = self.errorCalc(-sigError)
+        pError = sigError
+        nError = -sigError
         agonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
         antagonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
         for j in range(self.nJoints):

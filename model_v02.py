@@ -103,7 +103,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
 
         ax_pos.plot(
             time,
-            traj_no_error.torq[:, j],
+            traj_no_error.vel[:, j],
             '--',
             color=c,
             lw=2,
@@ -111,7 +111,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
 
         ax_pos.plot(
             time,
-            final_traj.torq[-1, :, j],
+            final_traj.vel[:, j],
             '-',
             color=c,
             lw=2,
@@ -266,6 +266,17 @@ def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
     with open(filename, "wb") as f:
         pickle.dump(data, f)
 
+def supervisor_torque(currPos, qMin, qMax, margin=0, gain=20):
+    """Mimics mechanical brakes: zero everywhere except near joint limits,
+    where it pushes back proportionally to how far past the safe margin
+    the joint has gone."""
+    correction = np.zeros_like(currPos)
+    near_upper = currPos > (qMax - margin)
+    near_lower = currPos < (qMin + margin)
+    correction[near_upper] = -gain * (currPos[near_upper] - (qMax[near_upper] - margin))
+    correction[near_lower] = gain * ((qMin[near_lower] + margin) - currPos[near_lower])
+    return correction
+
 def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     '''
     Controls the arm with the cerebellar feedback loop
@@ -286,8 +297,8 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     '''
     # initialize the trajectory
     currPos       = traj_w_error.pos[0,:] 
-    currVel       = traj_w_error.vel[0,:]
-    currAcc       = traj_w_error.acel[0,:]
+    currVel       = np.zeros_like(traj_w_error.vel[0,:])
+    currAcc       = np.zeros_like(traj_w_error.acel[0,:])
     arm.move(currPos, currVel, currAcc)
     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
                             torq=np.zeros((nTrials, len(time), arm.njoints)),
@@ -299,12 +310,14 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     errorTot = np.zeros(nTrials)
     # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
     step = int(round(len(time) / (np.floor(time[-1] / brain.timeStep) + 1), 0))
-    print(step)
     # PD Constants
     kp = np.ones(arm.njoints)*0
-    kd = 2*np.sqrt(kp)
+    kd = [5, 5, 5, 5, 1, 1, 1]
+    # kd = 2*np.sqrt(kp)
     qMin = arm.model.lowerPositionLimit
     qMax = arm.model.upperPositionLimit
+    qSuppMin = np.array([-0.97, -0.48, -0.005, 0.58, -0.066, 0.24, qMin[6]])
+    qSuppMax = np.array([-0.55, -0.03, 0.04, 1.80, 0.02, 1.02, qMax[6]])
     qdMax = arm.model.velocityLimit
     tauMax = arm.model.effortLimit
     # brain commands and inputs stored for delay
@@ -334,15 +347,17 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
                 if trial != 0 or i >= delAff:
                     corrTorque = prevComm.popleft()
                 # corrTorque[6] = torque[6] # this is for the joint not controlled by the brain
-            finalTorque = corrTorque
-            np.clip(finalTorque, -tauMax, tauMax, out=finalTorque)
             torrPd = kp*(qError) + kd*(qdError)
+            torrSup = supervisor_torque(currPos, qSuppMin, qSuppMax)
+            finalTorque = corrTorque + torrPd + torrSup
+            np.clip(finalTorque, -tauMax, tauMax, out=finalTorque)
             # move the arm
             currAcc = arm.forward(currPos, currVel, finalTorque)
             if i > 0:
                 dt      = time[i] - time[i-1]
                 currVel = (currVel + currAcc *dt)
-                np.clip(currVel, -qdMax, qdMax, out=currVel)
+                # would clip vel here but their traj has vel need to be more than the model limit
+                # np.clip(currVel, -qdMax, qdMax, out=currVel)
                 currPos = pin.integrate(arm.model, currPos, currVel * dt)
             np.clip(currPos, qMin, qMax, out=currPos)
             arm.move(currPos, currVel, currAcc)
@@ -360,12 +375,15 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         print(f"q_min: {final_traj.pos.min(axis=0)} q_max: {final_traj.pos.max(axis=0)}")
         print(f"qd_min: {final_traj.vel.min(axis=0)} qd_max: {final_traj.vel.max(axis=0)}")
         # reset between each trial
-        # currPos          = traj_w_error.pos[0,:] 
-        # currVel          = traj_w_error.vel[0,:]
-        # currAcc          = traj_w_error.acel[0,:]
-        # arm.move(currPos, currVel, currAcc)
+        currPos          = traj_w_error.pos[0,:] 
+        currVel          = np.zeros_like(traj_w_error.vel[0,:])
+        currAcc          = np.zeros_like(traj_w_error.acel[0,:])
+        arm.move(currPos, currVel, currAcc)
+        prevErrors.clear()
+        prevPos.clear()
+        prevComm.clear()
         # store for plotting
-        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos[:-1],  final_traj.pos[:-1])])
+        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
         # brainResults.mf_dcn[trial, :] = brain.getMF_DCN()
         # brainResults.pc_dcn[trial, :] = brain.getPC_DCN()
         # brainResults.pf_pc[trial, :]  = brain.getPF_PC()
