@@ -103,7 +103,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
 
         ax_pos.plot(
             time,
-            traj_no_error.vel[:, j],
+            traj_no_error.pos[:, j],
             '--',
             color=c,
             lw=2,
@@ -111,7 +111,7 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
 
         ax_pos.plot(
             time,
-            final_traj.vel[:, j],
+            final_traj.pos[:, j],
             '-',
             color=c,
             lw=2,
@@ -266,16 +266,22 @@ def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
     with open(filename, "wb") as f:
         pickle.dump(data, f)
 
-def supervisor_torque(currPos, qMin, qMax, margin=0, gain=20):
+def supervisor_torque(currPos, currVel, qMin, qMax, smoothing):
     """Mimics mechanical brakes: zero everywhere except near joint limits,
     where it pushes back proportionally to how far past the safe margin
     the joint has gone."""
+    kp = np.array([5, 5, 5, 5, 1, 1, 1])
+    kd = np.array([20, 20, 20, 20, 3, 3, 3])
     correction = np.zeros_like(currPos)
-    near_upper = currPos > (qMax - margin)
-    near_lower = currPos < (qMin + margin)
-    correction[near_upper] = -gain * (currPos[near_upper] - (qMax[near_upper] - margin))
-    correction[near_lower] = gain * ((qMin[near_lower] + margin) - currPos[near_lower])
-    return correction
+    near_upper = currPos > qMax
+    near_lower = currPos < qMin
+    correction[near_upper] = kp[near_upper]*(qMax[near_upper]-currPos[near_upper])  - smoothing[near_upper]*kd[near_upper]*currVel[near_upper]
+    correction[near_lower] = kp[near_lower]*(qMin[near_lower]-currPos[near_lower])  - smoothing[near_lower]*kd[near_lower]*currVel[near_lower]
+    smoothing[near_upper] += 0.02
+    smoothing[near_lower] += 0.02
+    smoothing[(currPos <= qMax) * (currPos >= qMin)] = 0
+    smoothing = np.clip(smoothing, 0, 1)
+    return correction, smoothing
 
 def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     '''
@@ -314,10 +320,10 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     kp = np.ones(arm.njoints)*0
     kd = [5, 5, 5, 5, 1, 1, 1]
     # kd = 2*np.sqrt(kp)
+    # kp = np.array([5, 5, 5, 5, 1, 1, 1])
+    # kd = np.array([20, 20, 20, 20, 3, 3, 3])
     qMin = arm.model.lowerPositionLimit
     qMax = arm.model.upperPositionLimit
-    qSuppMin = np.array([-0.97, -0.48, -0.005, 0.58, -0.066, 0.24, qMin[6]])
-    qSuppMax = np.array([-0.55, -0.03, 0.04, 1.80, 0.02, 1.02, qMax[6]])
     qdMax = arm.model.velocityLimit
     tauMax = arm.model.effortLimit
     # brain commands and inputs stored for delay
@@ -329,6 +335,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     prevErrors = deque()
     prevPos = deque()
     prevComm = deque()
+    smoothing = np.zeros_like(corrTorque)
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
@@ -341,14 +348,14 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
                 qSig = prevPos.popleft()
             # compute corrections, but brain only fires once for every PF
             if i % step ==0:
-                corr = brain.compute(qSig[0][:6], qSig[1][:6], traj_w_error.pos[i, :6], 
-                                    traj_w_error.vel[i, :6], (errSig[0])[:6], (errSig[1])[:6]) 
+                corr = brain.compute(qSig[0][:6], qSig[1][:6], qSig[2][:6], 
+                                    qSig[3][:6], (errSig[0])[:6], (errSig[1])[:6]) 
                 prevComm.append(np.concat((corr, [0])))
                 if trial != 0 or i >= delAff:
                     corrTorque = prevComm.popleft()
                 # corrTorque[6] = torque[6] # this is for the joint not controlled by the brain
             torrPd = kp*(qError) + kd*(qdError)
-            torrSup = supervisor_torque(currPos, qSuppMin, qSuppMax)
+            torrSup, smoothing = supervisor_torque(currPos, currVel, arm.qSuppMin, arm.qSuppMax, smoothing)
             finalTorque = corrTorque + torrPd + torrSup
             np.clip(finalTorque, -tauMax, tauMax, out=finalTorque)
             # move the arm
@@ -372,18 +379,21 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             final_traj.torq[trial, i] = corrTorque
             if trial == nTrials-1:
                 final_traj.acel[i,:]  = currAcc
-        print(f"q_min: {final_traj.pos.min(axis=0)} q_max: {final_traj.pos.max(axis=0)}")
-        print(f"qd_min: {final_traj.vel.min(axis=0)} qd_max: {final_traj.vel.max(axis=0)}")
+        n_at_ceiling = np.sum(brain.pf_pc_wts >= brain.W_MAX - 1e-15)
+        n_at_floor = np.sum(brain.pf_pc_wts <= brain.W_MIN + 1e-15)
+        print(f"n:{trial} ceil: {n_at_ceiling}, floor: {n_at_floor}")
+        # print(f"q_min: {final_traj.pos.min(axis=0)} q_max: {final_traj.pos.max(axis=0)}")
+        # print(f"qd_min: {final_traj.vel.min(axis=0)} qd_max: {final_traj.vel.max(axis=0)}")
         # reset between each trial
-        currPos          = traj_w_error.pos[0,:] 
-        currVel          = np.zeros_like(traj_w_error.vel[0,:])
-        currAcc          = np.zeros_like(traj_w_error.acel[0,:])
-        arm.move(currPos, currVel, currAcc)
-        prevErrors.clear()
-        prevPos.clear()
-        prevComm.clear()
+        # currPos          = traj_w_error.pos[0,:] 
+        # currVel          = np.zeros_like(traj_w_error.vel[0,:])
+        # currAcc          = np.zeros_like(traj_w_error.acel[0,:])
+        # arm.move(currPos, currVel, currAcc)
+        # prevErrors.clear()
+        # prevPos.clear()
+        # prevComm.clear()
         # store for plotting
-        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
+        errorTot[trial]  = np.sum([np.linalg.norm(des[:6] - act[:6]) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
         # brainResults.mf_dcn[trial, :] = brain.getMF_DCN()
         # brainResults.pc_dcn[trial, :] = brain.getPC_DCN()
         # brainResults.pf_pc[trial, :]  = brain.getPF_PC()
@@ -580,7 +590,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     illusoryArm = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs) # not needed in this version
     # brain           = gc.Cerebellum(arm.njoints) 
     # -1 joint because joint w2 is uncontrolled by the brain
-    brain           = cerebellum(n_dof=arm.njoints - 1)
+    brain           = cerebellum(arm.qSuppMin[:6], arm.qdSuppMin[:6], arm.qSuppMax[:6], arm.qdSuppMax[:6], n_dof=arm.njoints - 1)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 

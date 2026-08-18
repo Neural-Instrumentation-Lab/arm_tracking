@@ -427,6 +427,12 @@ class baxter_reduced(dynamic_3dof_arm):
                            [ 9.62403736e-04, -1.67796321e-03,  9.99998129e-01]]) 
         self.t = np.array([1.3833375,0.57457608,-0.02481647])
 
+        self.qSuppMin = np.array([-0.97, -0.48, -0.005, 0.58, -0.066, 0.24, 0])
+        self.qSuppMax = np.array([-0.55, -0.03, 0.04, 1.80, 0.02, 1.02, 0])
+
+        self.qdSuppMin = np.array([-0.79, -0.75, -0.055, -1.8, -0.225, -1.1, 0])
+        self.qdSuppMax = np.array([0.53, 0.75, 0.08, 1.81, 0.097, 1.1, 0])
+
         if disp:
             # print neutral config
             q = pin.neutral(self.model)

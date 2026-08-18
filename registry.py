@@ -26,7 +26,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "test.png",
             videos=VIDEO / "test.mp4",
             nDof=7,
-            nTrials=500,
+            nTrials=100,
             load_weight_groups = (),
         ),
         Experiment(

@@ -98,6 +98,26 @@ class CFsubcomplexALT:
 
         return spiked
 
+class MFsubcomplex:
+    SIGMA = 0.5
+
+    def __init__(self, min, max, n_neurons=10):
+        self.n_neurons = n_neurons
+        self.centers = np.linspace(min, max, num=n_neurons) 
+        self.widths = np.ones_like(self.centers) * MFsubcomplex.SIGMA*(max - min)/(n_neurons-1)
+        self.spikes = np.zeros_like(self.centers, dtype=np.int64)
+
+    def step(self, inp, dt):
+        self.spikes.fill(0)
+        current = 1 - np.abs((inp - self.centers)/self.widths)
+        self.spikes = current > 0
+        if not self.spikes.any():
+            if inp > self.centers[-1]:
+                self.spikes[-1] = 1
+            else:
+                self.spikes[0] = 1
+        return self.spikes
+
 
 class PFSpikeHistory:
     """
@@ -167,14 +187,14 @@ class cerebellum:
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
-    def __init__(self, n_dof=6):
+    def __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6):
         self.nJoints = n_dof
         self.t = 0
         # these numbers are all PER JOINT
         self.nMF_subgroups    = 4
         self.nMF_per_subgroup = 10
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
-        self.W_MF_GC   = 0.18e-9 
+        self.W_MF_GC   = 0.18e-9
         self.W_PC_DCN  = 1e-9
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
@@ -186,6 +206,10 @@ class cerebellum:
         self.nPC      = 100
         self.nDCN     = 100
 
+        self.qmins = qMins
+        self.qmaxs = qMaxs
+        self.qdmins = qdMins
+        self.qdmaxs = qdMaxs
 
         # this AMPA input is constant from MF firing rate being constant
         # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.nMF_subgroups*n_dof*self.W_MF_DCN
@@ -193,12 +217,17 @@ class cerebellum:
         # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*0.12e-9
 
         self.gcNeurons     = LIFPopulation(n=self.nGC * n_dof, params=GC_params)
-        self.mf_output     = np.zeros(self.nMF * n_dof, dtype=np.float64)
         self.gc_ampa_input = np.zeros(self.nGC * n_dof, dtype=np.float64)
         self.pf_history = PFSpikeHistory()
 
         self.CF_complexes  = [CFsubcomplexALT(n_neurons=int(self.nCF/2)) for _ in range(self.nJoints*2)] 
         self.cf_output     = np.zeros(self.nCF * n_dof, dtype=np.bool)
+
+        self.MF_complexesQ      = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
+        self.MF_complexesQdes   = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
+        self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdMaxs)]
+        self.MF_complexesQddes  = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdMaxs)]
+        self.mf_out     = np.zeros(self.nMF * n_dof, dtype=np.float64)
 
         self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
         self.pc_out = np.zeros(self.nPC * n_dof, dtype=bool)
@@ -243,22 +272,45 @@ class cerebellum:
 
     def granularLayer(self, q, qd, qdes, qddes, dt):
         self.gc_ampa_input.fill(0.0)
-
+        """
+        RBF BASED MF IMPLEMENTATION (NOT WORKING YET)
+        """
+        # self.mf_out.fill(0.0)
+        # step = self.nMF_per_subgroup * self.nJoints  
+        # steep = self.nMF_per_subgroup
+        # for i, (pos, mf_c) in enumerate(zip(q, self.MF_complexesQ)):
+        #     self.mf_out[i*steep:(i+1)*steep] = mf_c.step(pos, dt)
+        # for i, (pos, mf_c) in enumerate(zip(qdes, self.MF_complexesQdes)):
+        #     self.mf_out[step+i*steep:step+(i+1)*steep] = mf_c.step(pos, dt)
+        # for i, (pos, mf_c) in enumerate(zip(qd, self.MF_complexesQd)):
+        #     self.mf_out[step*2+i*steep:step*2+(i+1)*steep] = mf_c.step(pos, dt)
+        # for i, (pos, mf_c) in enumerate(zip(qddes, self.MF_complexesQddes)):
+        #     self.mf_out[step*3+i*steep:step*3+(i+1)*steep] = mf_c.step(pos, dt)
+        # self.mf_out = self.mf_out.reshape(self.nMF_subgroups, self.nJoints, self.nMF_per_subgroup)
+        # # This part isn't right yet
+        # chosen = np.nonzero(self.mf_out)
+        # for joint in range(self.nJoints):
+        #     idx = chosen[1] == joint
+        #     subgroups, mf = (chosen[0])[idx], (chosen[2])[idx]
+        #     for q_mf, q_mf_i in zip(subgroups[subgroups == 0], mf[subgroups == 0]):
+        #         for qdes_mf, qdes_mf_i in zip(subgroups[subgroups == 1], mf[subgroups == 1]):
+        #             for qd_mf, qd_mf_i in zip(subgroups[subgroups == 2], mf[subgroups == 2]):
+        #                 for qddes_mf, qddes_mf_i in zip(subgroups[subgroups == 3], mf[subgroups == 3]):
+        #                     digits = [q_mf_i, qdes_mf_i, qd_mf_i, qddes_mf_i]
+        #                     addressed_index = self.address_to_gc_index(digits, joint)
+        #                     self.gc_ampa_input[addressed_index] = self.W_MF_GC * self.nMF_subgroups
+        """
+        ONE-HOT IMPLEMENTATION (WORKING BUT I DON'T THINK THIS IS HOW THEY DO IT
+        """
         for j in range(self.nJoints):
-            digits = self.encode_mf_address((q[j], qd[j], qdes[j], qddes[j]), cerebellum.DEFAULT_MF_VALUE_RANGES)
+            digits = self.encode_mf_address((q[j], qd[j], qdes[j], qddes[j]), ((self.qmins[j], self.qmaxs[j]), 
+                                                                               (self.qdmins[j], self.qdmaxs[j]), 
+                                                                               (self.qmins[j], self.qmaxs[j]), 
+                                                                               (self.qdmins[j], self.qdmaxs[j])))
             addressed_index = self.address_to_gc_index(digits, j)
             self.gc_ampa_input[addressed_index] = self.W_MF_GC * self.nMF_subgroups
         self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
-        # self.gc_ampa_input = self.gc_ampa_input.reshape((self.nJoints, self.nMF_per_subgroup, self.nMF_per_subgroup, self.nMF_per_subgroup, self.nMF_per_subgroup))
-        # for j in range(self.nJoints):
-        #     digits = self.encode_mf_address((q[j], qd[j], qdes[j], qddes[j]), cerebellum.DEFAULT_MF_VALUE_RANGES)
-        #     # addressed_index = self.address_to_gc_index(digits, j)
-        #     self.gc_ampa_input[j, digits[0], :, :, :] += self.W_MF_GC
-        #     self.gc_ampa_input[j, :, digits[1], :, :] += self.W_MF_GC
-        #     self.gc_ampa_input[j, :, :, digits[2], :] += self.W_MF_GC
-        #     self.gc_ampa_input[j, :, :, :, digits[3]] += self.W_MF_GC
-        # self.gc_ampa_input = self.gc_ampa_input.reshape(-1)
-        # self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
+
 
     def errorCalc(self, error):
         max_error = 1 
