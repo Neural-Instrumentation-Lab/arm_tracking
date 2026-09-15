@@ -29,6 +29,10 @@ from matplotlib.gridspec import GridSpec
 from pathlib import Path
 from collections import deque
 
+TIMESTEP = 2e-3
+DEL_AFF = 50e-3
+DEL_EFF = 50e-3
+
 matplotlib.use('TkAgg')
 
 logging.basicConfig(
@@ -265,7 +269,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     torrPd = np.zeros_like(currPos)
     errorTot = np.zeros(nTrials)
     # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
-    step = int(round(len(time) / (np.floor(time[-1] / 2e-3) + 1), 0))
+    step = int(round(len(time) / (np.floor(time[-1] / TIMESTEP) + 1), 0))
     # PD Constants from garrido source code
     # whether their should be a kd in this control loop has racked my mind
     # for a while, but It's convergence is MUCH smoother with the kd.
@@ -277,8 +281,8 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     qdMax = arm.model.velocityLimit
     tauMax = arm.model.effortLimit
     # brain commands and inputs stored for delay
-    delEff = int(round(50e-3 * (len(time) / time[-1])))
-    delAff = int(round(50e-3 * (len(time) / time[-1])))
+    delEff = int(round(DEL_EFF * (len(time) / time[-1])))
+    delAff = int(round(DEL_AFF * (len(time) / time[-1])))
     errSig = (np.zeros_like(currPos), np.zeros_like(currVel))
     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
     torSig = np.zeros_like(corrTorque)
