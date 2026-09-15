@@ -54,7 +54,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "joystick.png",
             videos=VIDEO / "joystick.mp4",
             nDof=2,
-            nTrials=100,
+            nTrials=10,
             load_weight_groups = (),
         )
 

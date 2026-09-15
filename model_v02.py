@@ -288,7 +288,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     for trial in range(nTrials):
         for i, _ in enumerate(traj_w_error.pos):
             # compute error 
-            qError  = traj_w_error.pos[i] - currPos
+            qError  = traj_w_error.pos[i] - currVel
             qdError = np.array([0,0]) #traj_w_error.vel[i] - currVel
             prevErrors.append((qError.copy(), qdError.copy()))
             prevPos.append((currPos.copy(), currVel.copy(), traj_w_error.pos[i].copy(), traj_w_error.vel[i].copy()))
@@ -298,19 +298,20 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             # compute corrections, but brain only fires once for every PF
             # the brain only computes for joints 1-6 not 7
             if i % step ==0:
-                corr = brain.compute(qSig[0], qSig[1], qSig[2], 
-                                    qSig[3], errSig[0], (errSig[1])) 
+                corr = np.array([0, 0])
+                # corr = brain.compute(qSig[0], qSig[1], qSig[2], 
+                #                     qSig[3], errSig[0], (errSig[1])) 
                 prevComm.append(corr)
                 if trial != 0 or i >= delAff:
                     corrTorque = prevComm.popleft()
             # move the arm
             if i > 0:
                 dt      = time[i] - time[i-1]
-                currPos += currVel*dt
-                currPos = np.clip(currPos, -2, 2)
-                currVel -= corrTorque*dt 
+                # currVel = corr 
+                currVel = qError*[1,1]
+                arm.step(currVel[0], currVel[1], dt)
+                currPos = arm.getPos()
                 currVel = np.clip(currVel, -5, 5)
-                arm.step(currPos[0], currPos[1], dt)
             final_traj.pos[i,:]   = currPos 
             final_traj.eePos[trial, i,:] = arm.getPos()
         print(f"trial {trial} done")
@@ -425,7 +426,8 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # with a control feedback from the cerebellar model 
     final_traj, errorTot = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
     print(final_traj.pos)
-    joystick.animate_inputs(final_traj.pos, time)
+    joystick.animate_inputs(final_traj.eePos, time)
+    joystick.animate_inputs(traj_no_error.eePos, time)
 
     # saving trajectories
     # trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
