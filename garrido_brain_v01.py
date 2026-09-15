@@ -211,6 +211,9 @@ class cerebellum:
         self.qdmins = qdMins
         self.qdmaxs = qdMaxs
 
+        self.effDelay = 50e-3
+        self.affDelay = 50e-3
+
         # this AMPA input is constant from MF firing rate being constant
         # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.nMF_subgroups*n_dof*self.W_MF_DCN
         self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.W_MF_DCN
@@ -417,10 +420,6 @@ class cerebellum:
         dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
                              nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
                              gaba_input=(self.pc_out*self.W_PC_DCN))
-        if dcnOut[150:199].any():
-            pass 
-        # if not dcnOut.all() and dcnOut.any():
-        #     print("waaaaaah")
         corr = self.dcnToTorque(dcnOut, dt)
         self.t += 1
         return(corr)

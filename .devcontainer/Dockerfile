@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libgomp1 \
     build-essential \
+    cmake \
     libeigen3-dev \
     git \
     openssh-client \
@@ -25,8 +26,7 @@ WORKDIR /workspace
 
 # Copy and install Python dependencies
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
-    pip install --no-cache-dir ruff
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Set matplotlib backend to TkAgg for interactive plots
 ENV MPLBACKEND=TkAgg

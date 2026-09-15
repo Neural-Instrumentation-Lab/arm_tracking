@@ -18,7 +18,8 @@ import matplotlib.pyplot as plt
 import matplotlib
 import sys
 from arm_assets_v02 import dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff, baxter_reduced
-from garrido_brain_v01 import cerebellum
+# from garrido_brain_v01 import cerebellum
+import garrido_brain as gb
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
@@ -93,14 +94,10 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     ax_t2.grid(True)
     ax_t2.tick_params(labelbottom=False)
     ax_t2.sharex(ax_t1)
-
     colors = plt.cm.tab10.colors   # or plt.rcParams['axes.prop_cycle'].by_key()['color']
-
     leg = []
-
     for j in range(nDof - 1):
         c = colors[j % len(colors)]
-
         ax_pos.plot(
             time,
             traj_no_error.pos[:, j],
@@ -108,7 +105,6 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
             color=c,
             lw=2,
         )
-
         ax_pos.plot(
             time,
             final_traj.pos[:, j],
@@ -116,7 +112,6 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
             color=c,
             lw=2,
         )
-
         leg.extend([
             f"Joint {j+1} Ideal",
             f"Joint {j+1} Actual"
@@ -145,71 +140,26 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
         plt.show()
     plt.close(fig)
 
-def plot_brain_results(errorTot, errJointNoBrain, brainResults, time, saveLoc=None, show=True, save=False):
-    '''
-    Args:
-        errorTot: Vector of joint MAE over nTrials
-        errJointNoBrain: Joint MAE without a brain
-        brainResults: stores the various weights over nTrials and a trajectory
-        time: time vector of the trajectory
-    '''
-    # plotting evolution of MAE over nTrials
-    fig, axs = plt.subplots(3, 2, figsize=(12, 12), gridspec_kw={'hspace':0.3})
-    nTrials = brainResults.pc.shape[0]
-    sampleTrialNums = [1, int(np.ceil(nTrials/15)), int(np.ceil(nTrials/5)), int(np.ceil(nTrials*2/3))]
-    pltN = 0
-    axs[pltN, 0].plot(errorTot/len(time))
-    axs[pltN, 0].set_xlabel("Trial")
-    axs[pltN, 0].set_ylabel("Mean Absolute Error")
-    axs[pltN, 0].set_title("Evolution of MAE")
-    axs[pltN, 0].axhline(np.sum(errJointNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
-    axs[pltN, 0].legend(["Brain Error", "No Brain Error"])
-    # plotting PC activity over last trial of Joint 2
-    pltN += 1
-    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[0]-1, :, 2])
-    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[1]-1, :, 2])
-    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[2]-1, :, 2])
-    axs[pltN, 0].plot(time, brainResults.pc[sampleTrialNums[3]-1, :, 2])
-    axs[pltN, 0].set_xlabel("Time (s)")
-    axs[pltN, 0].set_ylabel("PC Activation")
-    axs[pltN, 0].set_title("Purkinje Cell Activation (Joint 2 Agonist)")
-    axs[pltN, 0].legend([f"Trial {sampleTrialNums[0]}", f"Trial {sampleTrialNums[1]}", f"Trial {sampleTrialNums[2]}", f"Trial {sampleTrialNums[3]}"])
-    # plotting some PF-PC synapses
-    pltN += 1
-    axs[pltN, 0].plot(brainResults.pf_pc[:, 50, 2]) 
-    axs[pltN, 0].plot(brainResults.pf_pc[:, 175, 2]) 
-    axs[pltN, 0].plot(brainResults.pf_pc[:, 300, 2]) 
-    axs[pltN, 0].plot(brainResults.pf_pc[:, 400, 2])
-    axs[pltN, 0].set_xlabel("Trial")
-    axs[pltN, 0].set_ylabel("PF-PC Weight")
-    axs[pltN, 0].set_title("PF-PC Weights for Joint 2 Agonist")
-    axs[pltN, 0].legend(["100ms", "350ms", "600ms", "800ms"])
-    # plotting MF_DCN weight of J2 Anti over nTrials
-    pltN = 0
-    axs[pltN, 1].plot(brainResults.mf_dcn[:, 2])
-    axs[pltN, 1].set_xlabel("Trial")
-    axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("MF_DCN Weight Joint 2 Agonist")
-    # plotting PC_DCN weight of J2 Anti over nTrials
-    pltN += 1
-    axs[pltN, 1].plot(brainResults.pc_dcn[:, 2])
-    axs[pltN, 1].set_xlabel("Trial")
-    axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("PC_DCN Weight Joint 2 Agonist")
-    # plotting DCN activity 
-    pltN += 1
-    axs[pltN, 1].set_xlabel("Time (s)")
-    axs[pltN, 1].set_ylabel("Weight")
-    axs[pltN, 1].set_title("DCN activity Joint 2 Agonist")
-    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[0]-1, :, 2])
-    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[1]-1, :, 2])
-    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[2]-1, :, 2])
-    axs[pltN, 1].plot(time, brainResults.dcn[sampleTrialNums[3]-1, :, 2])
-    axs[pltN, 1].legend([f"Trial {sampleTrialNums[0]}", f"Trial {sampleTrialNums[1]}", f"Trial {sampleTrialNums[2]}", f"Trial {sampleTrialNums[3]}"])
-
+def plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=True, save=False, saveLoc=None):
+    plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
+    plt.colorbar()
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
+    if show:
+        plt.show()
+    plt.close()
+    fig, axs = plt.subplots()
+    pltN = 0
+    axs.plot(errorTot/(len(time)*(n_dof-1)))
+    axs.set_xlabel("Trial")
+    axs.set_ylabel("Mean Absolute Error")
+    axs.set_title("Evolution of MAE")
+    axs.axhline(np.sum(errJointNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
+    axs.legend(["Brain Error", "No Brain Error"])
+    if save:
+        saveLoc.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
     plt.close(fig)
@@ -315,13 +265,13 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     torrPd = np.zeros_like(currPos)
     errorTot = np.zeros(nTrials)
     # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
-    step = int(round(len(time) / (np.floor(time[-1] / brain.timeStep) + 1), 0))
-    # PD Constants
+    step = int(round(len(time) / (np.floor(time[-1] / 2e-3) + 1), 0))
+    # PD Constants from garrido source code
+    # whether their should be a kd in this control loop has racked my mind
+    # for a while, but It's convergence is MUCH smoother with the kd.
+    # otherwise because of the non-reseting of the arm, the MAE oscillates.
     kp = np.ones(arm.njoints)*0
     kd = [5, 5, 5, 5, 1, 1, 1]
-    # kd = 2*np.sqrt(kp)
-    # kp = np.array([5, 5, 5, 5, 1, 1, 1])
-    # kd = np.array([20, 20, 20, 20, 3, 3, 3])
     qMin = arm.model.lowerPositionLimit
     qMax = arm.model.upperPositionLimit
     qdMax = arm.model.velocityLimit
@@ -347,13 +297,13 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
                 errSig = prevErrors.popleft()
                 qSig = prevPos.popleft()
             # compute corrections, but brain only fires once for every PF
+            # the brain only computes for joints 1-6 not 7
             if i % step ==0:
                 corr = brain.compute(qSig[0][:6], qSig[1][:6], qSig[2][:6], 
                                     qSig[3][:6], (errSig[0])[:6], (errSig[1])[:6]) 
                 prevComm.append(np.concat((corr, [0])))
                 if trial != 0 or i >= delAff:
                     corrTorque = prevComm.popleft()
-                # corrTorque[6] = torque[6] # this is for the joint not controlled by the brain
             torrPd = kp*(qError) + kd*(qdError)
             torrSup, smoothing = supervisor_torque(currPos, currVel, arm.qSuppMin, arm.qSuppMax, smoothing)
             finalTorque = corrTorque + torrPd + torrSup
@@ -368,37 +318,14 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
                 currPos = pin.integrate(arm.model, currPos, currVel * dt)
             np.clip(currPos, qMin, qMax, out=currPos)
             arm.move(currPos, currVel, currAcc)
-            # pinocchio does not automatically clamp joints to their limits
-            # so we gotta do it ourselves
             # store results for plotting
             final_traj.pos[i,:]   = currPos
             final_traj.vel[i,:]   = currVel
-            # brainResults.pc[trial, i,:]  = brain.getPC()
-            # brainResults.dcn[trial, i,:] = brain.getDCN()
             final_traj.eePos[trial, i,:] = arm.getPos()
             final_traj.torq[trial, i] = corrTorque
             if trial == nTrials-1:
                 final_traj.acel[i,:]  = currAcc
-        n_at_ceiling = np.sum(brain.pf_pc_wts >= brain.W_MAX - 1e-15)
-        n_at_floor = np.sum(brain.pf_pc_wts <= brain.W_MIN + 1e-15)
-        print(f"n:{trial} ceil: {n_at_ceiling}, floor: {n_at_floor}")
-        # print(f"q_min: {final_traj.pos.min(axis=0)} q_max: {final_traj.pos.max(axis=0)}")
-        # print(f"qd_min: {final_traj.vel.min(axis=0)} qd_max: {final_traj.vel.max(axis=0)}")
-        # reset between each trial
-        # currPos          = traj_w_error.pos[0,:] 
-        # currVel          = np.zeros_like(traj_w_error.vel[0,:])
-        # currAcc          = np.zeros_like(traj_w_error.acel[0,:])
-        # arm.move(currPos, currVel, currAcc)
-        # prevErrors.clear()
-        # prevPos.clear()
-        # prevComm.clear()
-        # store for plotting
         errorTot[trial]  = np.sum([np.linalg.norm(des[:6] - act[:6]) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
-        # brainResults.mf_dcn[trial, :] = brain.getMF_DCN()
-        # brainResults.pc_dcn[trial, :] = brain.getPC_DCN()
-        # brainResults.pf_pc[trial, :]  = brain.getPF_PC()
-    touched = brain.pf_pc_wts[brain.pf_pc_wts != cerebellum.INIT_PF_PC_WT]
-    print(f"Touched entries: {touched.size}")
     return final_traj, errorTot
 
 def transform(traj, arm):
@@ -476,100 +403,6 @@ def playVideo(time, trajectories, arm_ids, arm, illusoryArm, fps=30):
         viz.play(traj.pos[::int(len(time)/(fps*time[-1]))], 1/fps)
         prevChoice = userTraj
 
-def movie(traj_no_error, final_traj, brainResults, time, nTrials, fname, joint=1):
-    '''
-    makes animated plots with matplot and saves them to location in fname.
-    Takes a considerable amount of runtime. 
-    '''
-    fig = plt.figure(figsize=(14, 8))
-    gs = GridSpec(4, 2, figure=fig, width_ratios=[2, 1])  # left col wider than right
-
-    timeskip = int(len(time) / 30)
-    trialskip = int(nTrials / 30)
-
-    # Big 3d plot of cartesian position of end effector 
-    posax = fig.add_subplot(gs[:, 0], projection="3d")
-    line = posax.plot([], [], [])[0]
-    axes_buffer = 0.1
-    posax.plot(traj_no_error.eePos[:,0], traj_no_error.eePos[:,1], traj_no_error.eePos[:,2])[0]
-    posax.set_xlim(traj_no_error.eePos[:, 0].min()-axes_buffer, traj_no_error.eePos[:, 0].max()+axes_buffer)
-    posax.set_ylim(traj_no_error.eePos[:, 1].min()-axes_buffer, traj_no_error.eePos[:, 1].max()+axes_buffer)
-    posax.set_zlim(traj_no_error.eePos[:, 2].min()-axes_buffer, traj_no_error.eePos[:, 2].max()+axes_buffer)
-    posax.set_xlabel('X [m]', fontsize=10)
-    posax.set_ylabel('Y [m]', fontsize=10)
-    posax.set_zlabel('Z [m]', fontsize=10)
-    posax.legend(["actual", "ideal"])
-
-    trial_array = range(nTrials)
-    # joint to show in the plots
-    jointSel = {1 : 0, 2 : 2, 3 : 4}
-    jointIdx = jointSel[joint]
-
-    # all these plots are on the right column
-    # mf-dcn over the trials
-    mfdcnax = fig.add_subplot(gs[0, 1])
-    mfdcnagon = mfdcnax.plot([],[])[0] 
-    mfdcnaagon = mfdcnax.plot([],[])[0]
-    mfdcnax.set_xlim(1, nTrials)
-    mfdcnax.set_ylim(0, max(brainResults.mf_dcn[:, jointIdx+1].max(), brainResults.mf_dcn[:,jointIdx].max()) + 2)
-    mfdcnax.set_title(f"mf-dcn weight [Joint {joint}]")
-    mfdcnax.legend(["agonist", "antagonist"])
-
-    # pc-dcn over the trials
-    pcdcnax = fig.add_subplot(gs[1,1])
-    pcdcnag = pcdcnax.plot([],[])[0]
-    pcdcnaag = pcdcnax.plot([],[])[0]
-    pcdcnax.set_xlim(1 ,nTrials)
-    pcdcnax.set_ylim(0, max(brainResults.pc_dcn[:,jointIdx].max(), brainResults.pc_dcn[:, jointIdx+1].max()) + 2) 
-    pcdcnax.set_title(f"pc-dcn weight [Joint {joint}]")
-    pcdcnax.legend(["agonist", "antagonist"])
-
-    # pc activity over time
-    pcax = fig.add_subplot(gs[2, 1])
-    pcagon = pcax.plot([],[])[0]
-    pcaagon = pcax.plot([],[])[0]
-    pcax.set_xlim(0, time.max())
-    pcax.set_ylim(0, 1)
-    pcax.set_title(f"pc activity [Joint {joint}]")
-    pcax.legend(["agonist", "antagonist"])
-
-    # dcn activity over time
-    dcnax = fig.add_subplot(gs[3, 1])
-    dcnagon = dcnax.plot([],[])[0]
-    dcnaagon = dcnax.plot([],[])[0]
-    dcnax.set_xlim(0, time.max())
-    dcnax.set_ylim(0, max(brainResults.dcn[:, :, jointIdx].max(), brainResults.dcn[:, :, jointIdx+1].max()))
-    dcnax.set_title(f"dcn activity [Joint {joint}]")
-    dcnax.legend(["agonist", "antagonist"])
-
-
-    fig.tight_layout()
-    tot_frames = int((len(time)/timeskip)*np.floor(nTrials/trialskip))
-    def update(frame_idx):
-        '''
-        updates frame data in animation
-        '''
-        trial_idx = ((frame_idx*timeskip) // len(time))*trialskip
-        step_idx = (timeskip*frame_idx) % len(time)
-        currPos = final_traj.eePos[trial_idx, :step_idx+1, :]
-        line.set_data_3d([currPos[:, 0], currPos[:, 1], currPos[:, 2]])
-        posax.set_title(f"Trial: {trial_idx+1}")
-        mfdcnagon.set_data(trial_array[:trial_idx], brainResults.mf_dcn[:trial_idx, jointIdx])
-        mfdcnaagon.set_data(trial_array[:trial_idx], brainResults.mf_dcn[:trial_idx, jointIdx+1])
-        pcagon.set_data(time[:step_idx+1], brainResults.pc[trial_idx, :step_idx+1, jointIdx])
-        pcaagon.set_data(time[:step_idx+1], brainResults.pc[trial_idx, :step_idx+1, jointIdx+1])
-        dcnagon.set_data(time[:step_idx+1], brainResults.dcn[trial_idx, :step_idx+1, jointIdx])
-        dcnaagon.set_data(time[:step_idx+1], brainResults.dcn[trial_idx, :step_idx+1, jointIdx+1])
-        pcdcnag.set_data(trial_array[:trial_idx], brainResults.pc_dcn[:trial_idx, jointIdx])
-        pcdcnaag.set_data(trial_array[:trial_idx], brainResults.pc_dcn[:trial_idx, jointIdx+1])
-
-    ani = animation.FuncAnimation(fig, update, tot_frames, interval=8, blit=False)
-    writer = animation.FFMpegWriter(fps=30, bitrate=1800)
-    saveLoc = Path(fname)
-    saveLoc.parent.mkdir(parents=True, exist_ok=True)
-    ani.save(saveLoc, writer, dpi=100)
-    plt.close()
-
 ###################################
 def simulate(exp, save, showOutput, grav, makeMovie):
 ###################################
@@ -582,15 +415,13 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     """
     trajFile   = exp.trajectory 
     armFile    = exp.actualArm
-    illFile    = exp.illusoryArm 
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
-    arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs)
-    illusoryArm = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs) # not needed in this version
+    arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs, disp=showOutput)
     # brain           = gc.Cerebellum(arm.njoints) 
     # -1 joint because joint w2 is uncontrolled by the brain
-    brain           = cerebellum(arm.qSuppMin[:6], arm.qdSuppMin[:6], arm.qSuppMax[:6], arm.qdSuppMax[:6], n_dof=arm.njoints - 1)
+    brain           = gb.cerebellum(arm.qSuppMin[:6], arm.qdSuppMin[:6], arm.qSuppMax[:6], arm.qdSuppMax[:6], n_dof=arm.njoints - 1)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
@@ -608,67 +439,34 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # turn gravity off
     if grav == False:
         arm.model.gravity         = pin.Motion.Zero()
-        illusoryArm.model.gravity = pin.Motion.Zero()
 
     # Inverse Dynamics: computing the torques along a trajectory (with error) and recording where those torques make you end up
-    traj_w_error.torq, traj_w_error.eePos = illusoryArm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
+    traj_w_error.torq, traj_w_error.eePos = arm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
     traj_no_error.torq, _                 = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
-
-    # loading initial brain weights and setting plasticity
-    # plastic, wts = prepare_brain_weights(exp)
-    # brain.setActiveSites(plastic["pf_pc"], plastic["mf_dcn"], plastic["pc_dcn"])
-    # if wts is not None:
-        # brain.loadWts(wts.pf_pc, wts.mf_dcn, wts.pc_dcn)
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
     final_traj, errorTot = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
-
-    # fig = plt.figure()
-    # ax = fig.add_subplot(projection='3d')
-    # y= np.arange(len(brain.pf_pc_wts))
-    # x= np.arange(len(brain.pf_pc_wts[0]))
-    # (x, y) = np.meshgrid(x, y)
-    # surf = ax.plot_surface(x, y, brain.pf_pc_wts, cmap='viridis', edgecolor='none')
 
     # no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
     
     # saving trajectories
     trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
-    arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: illFile}
+    arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: armFile}
     if save:
         save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
         # save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
-    wts = brain.pf_pc_wts
-    print(wts.min())
-    print(wts.max())
-    plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
-    plt.colorbar()
-    plt.show()
 
     # plotting 
     errJointNoBrain    = [np.linalg.norm(des - act)/(n_dof-1) for (des,act) in zip(traj_no_error.pos[:6],  cntrl_traj.pos[:6])]
+    wts = brain.pf_pc_wts
     plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
-    # plot_brain_results(errorTot, errJointNoBrain, brainResults, time, show=showOutput, saveLoc=exp.graphs, save=save)
-
-    fig, axs = plt.subplots()
-    pltN = 0
-    axs.plot(errorTot/(len(time)*(n_dof-1)))
-    axs.set_xlabel("Trial")
-    axs.set_ylabel("Mean Absolute Error")
-    axs.set_title("Evolution of MAE")
-    axs.axhline(np.sum(errJointNoBrain)/len(time), color='r', linestyle='--', linewidth=2)
-    axs.legend(["Brain Error", "No Brain Error"])
-    plt.show()
-
-    # if makeMovie:
-    #     movie(traj_no_error, final_traj, brainResults, time, exp.nTrials, "results/videos/"+exp.name+".mp4")
+    plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
 
     if not showOutput:
         print("Simulation Complete...")
         return
 
-
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
-    playVideo(time, trajectories, arm_ids, arm, illusoryArm)
+    playVideo(time, trajectories, arm_ids, arm, arm)

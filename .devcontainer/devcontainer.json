@@ -4,7 +4,9 @@
         "dockerfile": "Dockerfile",
         "context": ".."
     },
-    "postCreateCommand": ".devcontainer/build_brain.sh",
+    // Brain build no longer runs automatically on container creation.
+    // Run it by hand from a terminal in the container when you need to
+    // (re)build it: .devcontainer/build_brain.sh
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     
