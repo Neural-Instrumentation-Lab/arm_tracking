@@ -18,8 +18,9 @@ import matplotlib.pyplot as plt
 import matplotlib
 import sys
 from arm_assets_v02 import dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff, baxter_reduced
-# from garrido_brain_v01 import cerebellum
-import garrido_brain as gb
+from joystick_movement import JoystickDotSimulator
+from garrido_brain_v01 import cerebellum
+# import garrido_brain as gb
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
@@ -261,40 +262,34 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     currAcc       = np.zeros_like(traj_w_error.acel[0,:])
     arm.move(currPos, currVel, currAcc)
     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
-                            torq=np.zeros((nTrials, len(time), arm.njoints)),
-                            eePos=np.zeros((nTrials, len(time), 3)),
+                            torq=np.zeros((nTrials, len(time), 2)),
+                            eePos=np.zeros((nTrials, len(time), 2)),
                             vel = np.zeros_like(traj_w_error.vel),
                             accel=np.zeros_like(traj_w_error.acel))
-    corrTorque = np.zeros_like(currPos)
-    torrPd = np.zeros_like(currPos)
     errorTot = np.zeros(nTrials)
     # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
     step = int(round(len(time) / (np.floor(time[-1] / TIMESTEP) + 1), 0))
+    prevP = np.zeros_like(traj_w_error.pos[0,:])
     # PD Constants from garrido source code
     # whether their should be a kd in this control loop has racked my mind
     # for a while, but It's convergence is MUCH smoother with the kd.
     # otherwise because of the non-reseting of the arm, the MAE oscillates.
-    kp = np.ones(arm.njoints)*0
-    kd = [5, 5, 5, 5, 1, 1, 1]
-    qMin = arm.model.lowerPositionLimit
-    qMax = arm.model.upperPositionLimit
-    qdMax = arm.model.velocityLimit
-    tauMax = arm.model.effortLimit
+    qMin = [-1, -1] 
+    qMax = [1, 1] 
     # brain commands and inputs stored for delay
     delEff = int(round(DEL_EFF * (len(time) / time[-1])))
     delAff = int(round(DEL_AFF * (len(time) / time[-1])))
     errSig = (np.zeros_like(currPos), np.zeros_like(currVel))
     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
-    torSig = np.zeros_like(corrTorque)
     prevErrors = deque()
     prevPos = deque()
     prevComm = deque()
-    smoothing = np.zeros_like(corrTorque)
+    corrTorque = np.zeros_like(currPos)
     for trial in range(nTrials):
-        for i, torque in enumerate(traj_w_error.torq):
+        for i, _ in enumerate(traj_w_error.pos):
             # compute error 
-            qError  = angle_diff(traj_w_error.pos[i], currPos)
-            qdError = traj_w_error.vel[i] - currVel
+            qError  = traj_w_error.pos[i] - currPos
+            qdError = np.array([0,0]) #traj_w_error.vel[i] - currVel
             prevErrors.append((qError.copy(), qdError.copy()))
             prevPos.append((currPos.copy(), currVel.copy(), traj_w_error.pos[i].copy(), traj_w_error.vel[i].copy()))
             if trial != 0 or i >= delEff:
@@ -303,33 +298,23 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             # compute corrections, but brain only fires once for every PF
             # the brain only computes for joints 1-6 not 7
             if i % step ==0:
-                corr = brain.compute(qSig[0][:6], qSig[1][:6], qSig[2][:6], 
-                                    qSig[3][:6], (errSig[0])[:6], (errSig[1])[:6]) 
-                prevComm.append(np.concat((corr, [0])))
+                corr = brain.compute(qSig[0], qSig[1], qSig[2], 
+                                    qSig[3], errSig[0], (errSig[1])) 
+                prevComm.append(corr)
                 if trial != 0 or i >= delAff:
                     corrTorque = prevComm.popleft()
-            torrPd = kp*(qError) + kd*(qdError)
-            torrSup, smoothing = supervisor_torque(currPos, currVel, arm.qSuppMin, arm.qSuppMax, smoothing)
-            finalTorque = corrTorque + torrPd + torrSup
-            np.clip(finalTorque, -tauMax, tauMax, out=finalTorque)
             # move the arm
-            currAcc = arm.forward(currPos, currVel, finalTorque)
             if i > 0:
                 dt      = time[i] - time[i-1]
-                currVel = (currVel + currAcc *dt)
-                # would clip vel here but their traj has vel need to be more than the model limit
-                # np.clip(currVel, -qdMax, qdMax, out=currVel)
-                currPos = pin.integrate(arm.model, currPos, currVel * dt)
-            np.clip(currPos, qMin, qMax, out=currPos)
-            arm.move(currPos, currVel, currAcc)
-            # store results for plotting
-            final_traj.pos[i,:]   = currPos
-            final_traj.vel[i,:]   = currVel
+                currPos += currVel*dt
+                currPos = np.clip(currPos, -2, 2)
+                currVel -= corrTorque*dt 
+                currVel = np.clip(currVel, -5, 5)
+                arm.step(currPos[0], currPos[1], dt)
+            final_traj.pos[i,:]   = currPos 
             final_traj.eePos[trial, i,:] = arm.getPos()
-            final_traj.torq[trial, i] = corrTorque
-            if trial == nTrials-1:
-                final_traj.acel[i,:]  = currAcc
-        errorTot[trial]  = np.sum([np.linalg.norm(des[:6] - act[:6]) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
+        print(f"trial {trial} done")
+        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
     return final_traj, errorTot
 
 def transform(traj, arm):
@@ -418,59 +403,46 @@ def simulate(exp, save, showOutput, grav, makeMovie):
         grav: whether gravity exists in sim or not
     """
     trajFile   = exp.trajectory 
-    armFile    = exp.actualArm
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
-    arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs, disp=showOutput)
-    # brain           = gc.Cerebellum(arm.njoints) 
-    # -1 joint because joint w2 is uncontrolled by the brain
-    brain           = gb.cerebellum(arm.qSuppMin[:6], arm.qdSuppMin[:6], arm.qSuppMax[:6], arm.qdSuppMax[:6], n_dof=arm.njoints - 1)
+    brain           = cerebellum([-1, -1], [-5, -5], [1, 1], [5, 5], n_dof=2)
+    joystick = JoystickDotSimulator()
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
     # cartesian pos, vel, accel and joint-space q, qd, qdd. If not they will be calculated, 
     # but this introduces noise in the double-differentation 
     traj_data           = load_trajectory(trajFile)   
-    traj_data           = transform(traj_data, arm)
-    traj_data           = fillTrajectory(traj_data, arm)
+    traj_data           = fillTrajectory(traj_data, joystick)
     time                = traj_data.time
     desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
     traj_w_error        = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
     traj_no_error       = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
     traj_no_error.eePos = desired_ee_traj.pos
 
-    # turn gravity off
-    if grav == False:
-        arm.model.gravity         = pin.Motion.Zero()
-
-    # Inverse Dynamics: computing the torques along a trajectory (with error) and recording where those torques make you end up
-    traj_w_error.torq, traj_w_error.eePos = arm.inverseDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.acel, time)
-    traj_no_error.torq, _                 = arm.inverseDynamics(traj_no_error.pos, traj_no_error.vel, traj_no_error.acel, time)
-
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+    final_traj, errorTot = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+    print(final_traj.pos)
+    joystick.animate_inputs(final_traj.pos, time)
 
-    # no-brain case for a control 
-    cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
-    
     # saving trajectories
-    trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
-    arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: armFile}
-    if save:
-        save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
+    # trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
+    # arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: armFile}
+    # if save:
+    #     save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
         # save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
 
     # plotting 
-    errJointNoBrain    = [np.linalg.norm(des - act)/(n_dof-1) for (des,act) in zip(traj_no_error.pos[:6],  cntrl_traj.pos[:6])]
-    wts = brain.pf_pc_wts
-    plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
-    plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
+    # errJointNoBrain    = [np.linalg.norm(des - act)/(n_dof-1) for (des,act) in zip(traj_no_error.pos[:6],  cntrl_traj.pos[:6])]
+    # wts = brain.pf_pc_wts
+    # plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
+    # plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
 
     if not showOutput:
         print("Simulation Complete...")
         return
 
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
-    playVideo(time, trajectories, arm_ids, arm, arm)
+    # playVideo(time, trajectories, arm_ids, arm, arm)

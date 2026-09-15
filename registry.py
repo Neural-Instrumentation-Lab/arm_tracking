@@ -43,6 +43,20 @@ EXPERIMENTS: dict[str, Experiment] = {
             nTrials=100,
             load_weight_groups = (),
         ),
+        Experiment(
+            name="joystick",
+            description="wooo yeah",
+            trajectory=TRAJS / "joystick.csv",
+            actualArm=ARMS / "baxter_fixed.urdf",
+            illusoryArm=ARMS / "baxter_fixed.urdf",
+            results=RESUL / "joystick.pkl",
+            finalWts=WTS / "joystick.npz",
+            graphs=GRAPH / "joystick.png",
+            videos=VIDEO / "joystick.mp4",
+            nDof=2,
+            nTrials=100,
+            load_weight_groups = (),
+        )
 
     ]
 }

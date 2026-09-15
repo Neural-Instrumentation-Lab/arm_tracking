@@ -177,10 +177,10 @@ def restrictAngle(angle):
 
 class cerebellum:
     DEFAULT_MF_VALUE_RANGES = (
-        (-1, 1),    # q      (actual position)
-        (-1.5, 1.5),    # qd     (actual velocity)
+        (-3, 3),    # q      (actual position)
+        (-5, 5),    # qd     (actual velocity)
         (-1, 1),    # q_des  (desired position)
-        (-1, 1),    # qd_des (desired velocity)
+        (-5, 5),    # qd_des (desired velocity)
     )
     ALPHA = 0.002e-9          # (S)
     BETA  = -0.001e-9         # (S)
@@ -199,7 +199,7 @@ class cerebellum:
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        self.TORQUE_ALPHA  = [0.75, 3.0, 0.375, 1.5, 0.05, 0.05]
+        self.TORQUE_ALPHA  = [1, 1]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -321,8 +321,8 @@ class cerebellum:
 
     def climbingFibers(self, qErr, qdErr, dt):
         self.cf_output.fill(False)
-        kp = np.array([1.5, 2, 3, 2, 3, 3])
-        kd = np.array([1.5, 1, 3, 1, 3, 0.5])
+        kp = np.array([1, 1])
+        kd = np.array([1, 1])
         # kp = np.ones(self.nJoints)*0.5
         # kd = np.ones(self.nJoints)*0.5/(2*np.pi)
         sigError = kp * (qErr) + kd * (qdErr)
@@ -413,7 +413,7 @@ class cerebellum:
 
     def compute(self, q, qd, qdes, qddes, qErr, qdErr, dt=2e-3):
         # input fiber layers
-        self.granularLayer(restrictAngle(q), qd, restrictAngle(qdes), qddes, dt)
+        self.granularLayer(q, qd, qdes, qddes, dt)
         self.climbingFibers(qErr, qdErr, dt)
         # now we have spikes from the PFs and the CFs in cf_output and pfs
         self.PCstep(dt)
