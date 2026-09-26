@@ -257,29 +257,21 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
 
     '''
     # initialize the trajectory
-    currPos       = traj_w_error.pos[0,:] 
+    currPos       = desired_ee_traj.pos[0,:].copy() 
     currVel       = np.zeros_like(traj_w_error.vel[0,:])
-    currAcc       = np.zeros_like(traj_w_error.acel[0,:])
-    arm.move(currPos, currVel, currAcc)
-    final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos), 
-                            torq=np.zeros((nTrials, len(time), 2)),
-                            eePos=np.zeros((nTrials, len(time), 2)),
-                            vel = np.zeros_like(traj_w_error.vel),
-                            accel=np.zeros_like(traj_w_error.acel))
+    arm.move(currPos)
+    final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos),
+                            vel=np.zeros_like(traj_w_error.vel))
     errorTot = np.zeros(nTrials)
     # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
     step = int(round(len(time) / (np.floor(time[-1] / TIMESTEP) + 1), 0))
     prevP = np.zeros_like(traj_w_error.pos[0,:])
-    # PD Constants from garrido source code
-    # whether their should be a kd in this control loop has racked my mind
-    # for a while, but It's convergence is MUCH smoother with the kd.
-    # otherwise because of the non-reseting of the arm, the MAE oscillates.
     qMin = [-1, -1] 
     qMax = [1, 1] 
     # brain commands and inputs stored for delay
     delEff = int(round(DEL_EFF * (len(time) / time[-1])))
     delAff = int(round(DEL_AFF * (len(time) / time[-1])))
-    errSig = (np.zeros_like(currPos), np.zeros_like(currVel))
+    errSig = np.zeros_like(currPos)
     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
     prevErrors = deque()
     prevPos = deque()
@@ -288,33 +280,31 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     for trial in range(nTrials):
         for i, _ in enumerate(traj_w_error.pos):
             # compute error 
-            qError  = traj_w_error.pos[i] - currVel
-            qdError = np.array([0,0]) #traj_w_error.vel[i] - currVel
-            prevErrors.append((qError.copy(), qdError.copy()))
-            prevPos.append((currPos.copy(), currVel.copy(), traj_w_error.pos[i].copy(), traj_w_error.vel[i].copy()))
-            if trial != 0 or i >= delEff:
+            qError  = desired_ee_traj.pos[i].copy() - arm.getPos().copy()
+            prevErrors.append(qError.copy())
+            prevPos.append((currPos.copy(), desired_ee_traj.pos[i].copy()))
+            if i >= delEff:
                 errSig = prevErrors.popleft()
                 qSig = prevPos.popleft()
             # compute corrections, but brain only fires once for every PF
             # the brain only computes for joints 1-6 not 7
-            if i % step ==0:
+            if i % step ==0 or trial != 0:
                 corr = np.array([0, 0])
-                # corr = brain.compute(qSig[0], qSig[1], qSig[2], 
-                #                     qSig[3], errSig[0], (errSig[1])) 
+                corr = brain.compute(qSig[0], qSig[1], errSig) 
                 prevComm.append(corr)
-                if trial != 0 or i >= delAff:
+                if i >= delAff:
                     corrTorque = prevComm.popleft()
             # move the arm
             if i > 0:
                 dt      = time[i] - time[i-1]
-                # currVel = corr 
-                currVel = qError*[1,1]
-                arm.step(currVel[0], currVel[1], dt)
-                currPos = arm.getPos()
-                currVel = np.clip(currVel, -5, 5)
-            final_traj.pos[i,:]   = currPos 
-            final_traj.eePos[trial, i,:] = arm.getPos()
+                arm.step(corrTorque[0], corrTorque[1], dt)
+            final_traj.pos[i,:]   = arm.getPos()
+            final_traj.vel[i,:]   = corrTorque
         print(f"trial {trial} done")
+        currPos = desired_ee_traj.pos[0,:]
+        arm.move(currPos.copy())
+        prevErrors.clear()
+        prevPos.clear()
         errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
     return final_traj, errorTot
 
@@ -407,7 +397,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
-    brain           = cerebellum([-1, -1], [-5, -5], [1, 1], [5, 5], n_dof=2)
+    brain           = cerebellum([-3, -3], [-3, -3], [3, 3], [3, 3], n_dof=2)
     joystick = JoystickDotSimulator()
 
     # load desired trajectory
@@ -426,7 +416,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # with a control feedback from the cerebellar model 
     final_traj, errorTot = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
     print(final_traj.pos)
-    joystick.animate_inputs(final_traj.eePos, time)
+    joystick.animate_inputs(final_traj.pos, time)
     joystick.animate_inputs(traj_no_error.eePos, time)
 
     # saving trajectories
@@ -446,5 +436,18 @@ def simulate(exp, save, showOutput, grav, makeMovie):
         print("Simulation Complete...")
         return
 
+    fig, axs = plt.subplots()
+    axs.plot(final_traj.vel)
+    plt.show()
+    fig, axs = plt.subplots()
+    axs.plot(errorTot/(len(time)*(n_dof-1)))
+    axs.set_xlabel("Trial")
+    axs.set_ylabel("Mean Absolute Error")
+    axs.set_title("Evolution of MAE")
+    plt.show()
+    wts = brain.pf_pc_wts
+    plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
+    plt.colorbar()
+    plt.show()
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     # playVideo(time, trajectories, arm_ids, arm, arm)

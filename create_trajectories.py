@@ -289,7 +289,7 @@ def create_traj_009():
 
 def create_traj_010():
     # makes a circle trajectory for joystick control
-    fs = 500
+    fs = 1000
     f = 0.1
     t = np.arange(0, 10, 1/fs)
     # cartesian

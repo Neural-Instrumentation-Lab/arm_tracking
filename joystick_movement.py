@@ -32,6 +32,7 @@ class JoystickDotSimulator:
             
         # Update position: Position = Position + (Joystick * MaxSpeed * dt)
         self.pos += joy_vector * self.max_speed * dt
+        self.pos = np.clip(self.pos, -3, 3)
         return self.pos.copy()
 
     def move(self, pos, vel=None, acc=None):
