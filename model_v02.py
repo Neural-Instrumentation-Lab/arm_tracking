@@ -271,6 +271,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     # brain commands and inputs stored for delay
     delEff = int(round(DEL_EFF * (len(time) / time[-1])))
     delAff = int(round(DEL_AFF * (len(time) / time[-1])))
+    kp = [1, 1]
     errSig = np.zeros_like(currPos)
     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
     prevErrors = deque()
@@ -281,19 +282,20 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         for i, _ in enumerate(traj_w_error.pos):
             # compute error 
             qError  = desired_ee_traj.pos[i].copy() - arm.getPos().copy()
-            prevErrors.append(qError.copy())
-            prevPos.append((currPos.copy(), desired_ee_traj.pos[i].copy()))
+            qdError = desired_ee_traj.vel[i].copy() - corrTorque; 
+            prevErrors.append((qError.copy(), qdError.copy()))
+            prevPos.append((arm.getPos().copy(), desired_ee_traj.pos[i].copy(), corrTorque, desired_ee_traj.vel[i].copy()))
             if i >= delEff:
                 errSig = prevErrors.popleft()
                 qSig = prevPos.popleft()
             # compute corrections, but brain only fires once for every PF
             # the brain only computes for joints 1-6 not 7
-            if i % step ==0 or trial != 0:
+            if i % step ==0: #or trial != 0:
                 corr = np.array([0, 0])
-                corr = brain.compute(qSig[0], qSig[1], errSig) 
+                corr = brain.compute(qSig[0], qSig[1], qSig[2], qSig[3], errSig[0], errSig[1]) 
                 prevComm.append(corr)
                 if i >= delAff:
-                    corrTorque = prevComm.popleft()
+                    corrTorque = prevComm.popleft() + kp * qError
             # move the arm
             if i > 0:
                 dt      = time[i] - time[i-1]
@@ -305,6 +307,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         arm.move(currPos.copy())
         prevErrors.clear()
         prevPos.clear()
+        prevComm.clear()
         errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
     return final_traj, errorTot
 
@@ -397,7 +400,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
-    brain           = cerebellum([-3, -3], [-3, -3], [3, 3], [3, 3], n_dof=2)
+    brain           = cerebellum([-1, -1], [-1, -1], [1, 1], [1, 1], n_dof=2)
     joystick = JoystickDotSimulator()
 
     # load desired trajectory
@@ -405,17 +408,23 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # cartesian pos, vel, accel and joint-space q, qd, qdd. If not they will be calculated, 
     # but this introduces noise in the double-differentation 
     traj_data           = load_trajectory(trajFile)   
-    traj_data           = fillTrajectory(traj_data, joystick)
+    # traj_data           = fillTrajectory(traj_data, joystick)
     time                = traj_data.time
-    desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
-    traj_w_error        = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
-    traj_no_error       = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
+    desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity)
+    traj_w_error        = armTraj(pos=traj_data.position, vel=traj_data.velocity)
+    traj_no_error       = armTraj(pos=traj_data.position, vel=traj_data.velocity)
     traj_no_error.eePos = desired_ee_traj.pos
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
+    # pos = np.zeros_like(traj_no_error.pos)
+    # joystick.move(traj_no_error.pos[0,:])
+    # for i, v in enumerate(traj_no_error.vel):
+    #     if i > 0:
+    #         dt      = time[i] - time[i-1]
+    #         joystick.step(v[0], v[1], dt)
+    #     pos[i, :] = joystick.getPos()
     final_traj, errorTot = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
-    print(final_traj.pos)
     joystick.animate_inputs(final_traj.pos, time)
     joystick.animate_inputs(traj_no_error.eePos, time)
 
@@ -438,12 +447,15 @@ def simulate(exp, save, showOutput, grav, makeMovie):
 
     fig, axs = plt.subplots()
     axs.plot(final_traj.vel)
+    axs.plot(traj_no_error.vel)
+    axs.legend(["x actual", "y actual", "x des", "y des"])
     plt.show()
     fig, axs = plt.subplots()
     axs.plot(errorTot/(len(time)*(n_dof-1)))
     axs.set_xlabel("Trial")
     axs.set_ylabel("Mean Absolute Error")
     axs.set_title("Evolution of MAE")
+    axs.axhline(0.4945)
     plt.show()
     wts = brain.pf_pc_wts
     plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")

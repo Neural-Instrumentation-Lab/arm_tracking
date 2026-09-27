@@ -174,19 +174,21 @@ def ltd_kernel(x, dk=DK, tau_ltd=TAU_LTD):
 
 class cerebellum:
     DEFAULT_MF_VALUE_RANGES = (
-        (-3, 3),    # q      (actual position)
-        (-3, 3),    # q_des  (desired position)
+        (-1, 1),    # q      (actual position)
+        (-1, 1),    # q_des  (desired position)
+        (-1, 1),    # q_des  (desired position)
+        (-1, 1),    # q_des  (desired position)
     )
     ALPHA = 0.002e-9          # (S)
     BETA  = -0.001e-9         # (S)
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
-    def __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6):
+    def __init__(self, qMins, qdMins, qMaxs, qdesMaxs, n_dof=6):
         self.nJoints = n_dof
         self.t = 0
         # these numbers are all PER JOINT
-        self.nMF_subgroups    = 2
+        self.nMF_subgroups    = 4
         self.nMF_per_subgroup = 10
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
         self.W_MF_GC   = 0.18e-9
@@ -194,7 +196,7 @@ class cerebellum:
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        self.TORQUE_ALPHA  = [0.3, 0.3]
+        self.TORQUE_ALPHA  = [0.06, 0.06]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -203,8 +205,8 @@ class cerebellum:
 
         self.qmins = qMins
         self.qmaxs = qMaxs
-        self.qdmins = qdMins
-        self.qdmaxs = qdMaxs
+        self.qdmins = qMins
+        self.qdmaxs = qMaxs
 
         self.effDelay = 50e-3
         self.affDelay = 50e-3
@@ -223,8 +225,8 @@ class cerebellum:
 
         self.MF_complexesQ      = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
         self.MF_complexesQdes   = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
-        self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdMaxs)]
-        self.MF_complexesQddes  = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdMaxs)]
+        self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdesMaxs)]
+        self.MF_complexesQddes  = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdesMaxs)]
         self.mf_out     = np.zeros(self.nMF * n_dof, dtype=np.float64)
 
         self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
@@ -265,10 +267,10 @@ class cerebellum:
 
     def address_to_gc_index(self, digits, nJoint):
         """Combine 4 base-10 digits into a single GC index in [0, 9999]."""
-        d0, d1 = digits
-        return (d0 + d1 * self.nMF_per_subgroup) + nJoint*self.nGC
+        d0, d1, d2, d3 = digits
+        return (d0 + d1 * self.nMF_per_subgroup + d2 * self.nMF_per_subgroup**2 + d3 * self.nMF_per_subgroup**3) + nJoint*self.nGC
 
-    def granularLayer(self, q, qd, dt):
+    def granularLayer(self, q, qdes, qd, qddes, dt):
         self.gc_ampa_input.fill(0.0)
         """
         RBF BASED MF IMPLEMENTATION (NOT WORKING YET)
@@ -301,7 +303,9 @@ class cerebellum:
         ONE-HOT IMPLEMENTATION (WORKING BUT I DON'T THINK THIS IS HOW THEY DO IT
         """
         for j in range(self.nJoints):
-            digits = self.encode_mf_address((q[j], qd[j]), ((self.qmins[j], self.qmaxs[j]),
+            digits = self.encode_mf_address((q[j], qdes[j], qd[j], qddes[j]), ((self.qmins[j], self.qmaxs[j]),
+                                                            (self.qmins[j], self.qmaxs[j]),
+                                                            (self.qdmins[j], self.qdmaxs[j]),
                                                             (self.qdmins[j], self.qdmaxs[j])))
             addressed_index = self.address_to_gc_index(digits, j)
             self.gc_ampa_input[addressed_index] = self.W_MF_GC * 4 #self.nMF_subgroups
@@ -312,13 +316,13 @@ class cerebellum:
         max_error = 1 
         return 0.2+0.8*(1-np.exp(-error*90/max_error));
 
-    def climbingFibers(self, qErr, dt):
+    def climbingFibers(self, qErr, qdErr, dt):
         self.cf_output.fill(False)
         kp = np.array([0.5, 0.5])
-        kd = np.array([1, 1])
+        kd = np.array([0.5, 0.5])
         # kp = np.ones(self.nJoints)*0.5
         # kd = np.ones(self.nJoints)*0.5/(2*np.pi)
-        sigError = kp * (qErr)
+        sigError = kp * (qErr) + kd*(qdErr)
         # pError = self.errorCalc(sigError)
         # nError = self.errorCalc(-sigError)
         pError = sigError
@@ -404,10 +408,10 @@ class cerebellum:
         corr = (self.TORQUE_ALPHA) * np.mean(self.prevDCN, axis=0)
         return corr
 
-    def compute(self, q, qd, qErr, dt=2e-3):
+    def compute(self, q, qdes, qd, qddes, qErr, qdErr, dt=2e-3):
         # input fiber layers
-        self.granularLayer(q, qd, dt)
-        self.climbingFibers(qErr, dt)
+        self.granularLayer(q, qdes, qd, qddes, dt)
+        self.climbingFibers(qErr, qdErr, dt)
         # now we have spikes from the PFs and the CFs in cf_output and pfs
         self.PCstep(dt)
         dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 

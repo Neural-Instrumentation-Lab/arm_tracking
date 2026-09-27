@@ -295,16 +295,14 @@ def create_traj_010():
     # cartesian
     x = np.cos(2*np.pi*t*f)
     y = np.sin(2*np.pi*t*f)
-    dx = np.gradient(x, t)
-    dy = np.gradient(y, t)
+    dx = -2*np.pi*f*np.sin(2*np.pi*t*f) 
+    dy = 2*np.pi*f*np.cos(2*np.pi*t*f) 
     # joystick (joint) positions
     joy = JoystickDotSimulator()
     poses = np.concat([x.reshape(-1, 1), y.reshape(-1, 1)], axis=1)
     vels = np.concat([dx.reshape(-1, 1), dy.reshape(-1, 1)], axis=1)
-    joints = joy.inverse_kinematics(x, y, t)
-    joint_v = np.gradient(joints, t, axis=0)
     fname = TRAJ / "joystick.csv"
-    save_data(fname,time=t, position=poses, velocity=vels, joint_position=joints, joint_velocity=joint_v) 
+    save_data(fname,time=t, position=poses, velocity=vels)
 
 
 
