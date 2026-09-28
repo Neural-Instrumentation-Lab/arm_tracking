@@ -179,8 +179,8 @@ class cerebellum:
         (-1, 1),    # q_des  (desired position)
         (-1, 1),    # q_des  (desired position)
     )
-    ALPHA = 0.002e-9          # (S)
-    BETA  = -0.001e-9         # (S)
+    ALPHA = 0.0002e-9          # (S)
+    BETA  = -0.0001e-9         # (S)
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 

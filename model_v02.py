@@ -271,7 +271,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     # brain commands and inputs stored for delay
     delEff = int(round(DEL_EFF * (len(time) / time[-1])))
     delAff = int(round(DEL_AFF * (len(time) / time[-1])))
-    kp = [1, 1]
+    kp = [0.3, 0.3]
     errSig = np.zeros_like(currPos)
     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
     prevErrors = deque()
@@ -303,11 +303,11 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             final_traj.pos[i,:]   = arm.getPos()
             final_traj.vel[i,:]   = corrTorque
         print(f"trial {trial} done")
-        currPos = desired_ee_traj.pos[0,:]
-        arm.move(currPos.copy())
-        prevErrors.clear()
-        prevPos.clear()
-        prevComm.clear()
+        # currPos = desired_ee_traj.pos[0,:]
+        # arm.move(currPos.copy())
+        # prevErrors.clear()
+        # prevPos.clear()
+        # prevComm.clear()
         errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
     return final_traj, errorTot
 
@@ -455,7 +455,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     axs.set_xlabel("Trial")
     axs.set_ylabel("Mean Absolute Error")
     axs.set_title("Evolution of MAE")
-    axs.axhline(0.4945)
+    axs.axhline(0.8)
     plt.show()
     wts = brain.pf_pc_wts
     plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
