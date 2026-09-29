@@ -271,7 +271,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     # brain commands and inputs stored for delay
     delEff = int(round(DEL_EFF * (len(time) / time[-1])))
     delAff = int(round(DEL_AFF * (len(time) / time[-1])))
-    kp = [0.3, 0.3]
+    kp = [0.1, 0.1]
     errSig = np.zeros_like(currPos)
     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
     prevErrors = deque()
@@ -295,19 +295,22 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
                 corr = brain.compute(qSig[0], qSig[1], qSig[2], qSig[3], errSig[0], errSig[1]) 
                 prevComm.append(corr)
                 if i >= delAff:
-                    corrTorque = prevComm.popleft() + kp * qError
+                    corrTorque = prevComm.popleft() #+ kp * qError
+            # if i % 100 == 0:
+            #     print(f"i: {i}, err: {errSig}, t: {corr}")
             # move the arm
             if i > 0:
                 dt      = time[i] - time[i-1]
                 arm.step(corrTorque[0], corrTorque[1], dt)
+                # print(arm.getPos(), corrTorque)
             final_traj.pos[i,:]   = arm.getPos()
             final_traj.vel[i,:]   = corrTorque
         print(f"trial {trial} done")
-        # currPos = desired_ee_traj.pos[0,:]
-        # arm.move(currPos.copy())
-        # prevErrors.clear()
-        # prevPos.clear()
-        # prevComm.clear()
+        currPos = desired_ee_traj.pos[0,:]
+        arm.move(currPos.copy())
+        prevErrors.clear()
+        prevPos.clear()
+        prevComm.clear()
         errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
     return final_traj, errorTot
 
@@ -400,7 +403,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
-    brain           = cerebellum([-1, -1], [-1, -1], [1, 1], [1, 1], n_dof=2)
+    brain           = cerebellum([-2, -1], [-1, -1], [2, 1], [1, 1], n_dof=2)
     joystick = JoystickDotSimulator()
 
     # load desired trajectory
@@ -455,7 +458,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     axs.set_xlabel("Trial")
     axs.set_ylabel("Mean Absolute Error")
     axs.set_title("Evolution of MAE")
-    axs.axhline(0.8)
+    axs.axhline(0.53)
     plt.show()
     wts = brain.pf_pc_wts
     plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")

@@ -174,13 +174,13 @@ def ltd_kernel(x, dk=DK, tau_ltd=TAU_LTD):
 
 class cerebellum:
     DEFAULT_MF_VALUE_RANGES = (
-        (-1, 1),    # q      (actual position)
+        (-2, 2),    # q      (actual position)
         (-1, 1),    # q_des  (desired position)
         (-1, 1),    # q_des  (desired position)
         (-1, 1),    # q_des  (desired position)
     )
-    ALPHA = 0.0002e-9          # (S)
-    BETA  = -0.0001e-9         # (S)
+    ALPHA = 0.002e-9          # (S)
+    BETA  = -0.001e-9         # (S)
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
@@ -318,8 +318,8 @@ class cerebellum:
 
     def climbingFibers(self, qErr, qdErr, dt):
         self.cf_output.fill(False)
-        kp = np.array([0.5, 0.5])
-        kd = np.array([0.5, 0.5])
+        kp = np.array([1, 1])
+        kd = np.array([0.1, 0.1])
         # kp = np.ones(self.nJoints)*0.5
         # kd = np.ones(self.nJoints)*0.5/(2*np.pi)
         sigError = kp * (qErr) + kd*(qdErr)
@@ -399,8 +399,8 @@ class cerebellum:
         self.pc_out = self.pcNeurons.step(dt=dt, ampa_input=pc_ampa_inp)
 
     def dcnToTorque(self, dcnOut, dt):
-        fix = dcnOut.reshape(self.nJoints*2, -1)
         torques = np.sum(dcnOut.reshape(self.nJoints*2, -1), axis=1)
+        # print(torques)
         torques[1::2] *= -1
         torques = np.sum(torques.reshape(-1, 2), axis=1)
         self.prevDCN[:-1] = self.prevDCN[1:]

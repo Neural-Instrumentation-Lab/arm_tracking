@@ -27,12 +27,12 @@ class JoystickDotSimulator:
         magnitude = np.linalg.norm(joy_vector)
         
         # Clamp joystick magnitude to max 1.0
-        if magnitude > 1.0:
-            joy_vector = joy_vector / magnitude
+        # if magnitude > 1.0:
+        #     joy_vector = joy_vector / magnitude
             
         # Update position: Position = Position + (Joystick * MaxSpeed * dt)
         self.pos += joy_vector * dt
-        self.pos = np.clip(self.pos, -1, 1)
+        self.pos = np.clip(self.pos, -2, 2)
         return self.pos.copy()
 
     def move(self, pos, vel=None, acc=None):
