@@ -39,7 +39,115 @@ class JoystickDotSimulator:
         """sets cursor to a position"""
         self.pos = pos
 
-    def animate_inputs(self, position, time, fps: int = 30):
+    def animate_inputs_duo(self, position1, position2, time, names = [], fps: int = 30, speed=2):
+        """
+        Animates two dots moving based on two sets of positions over time.
+
+        :param position1: List/array of (x, y) positions for the first dot.
+        :param position2: List/array of (x, y) positions for the second dot.
+        :param time: List/array of timestamps corresponding to the positions.
+        :param fps: Frames per second for the animation render.
+        :param speed: Animation playback speed multiplier.
+        """
+        # Determine how many samples to skip to approximately match the
+        # requested animation FPS.
+        sample_rate = 1.0 / (time[1] - time[0])
+        sample_step = max(1, int(sample_rate / fps))
+
+        # Sample both trajectories using the same timestamps
+        trajectory1 = np.asarray(position1)[::sample_step, :2]
+        trajectory2 = np.asarray(position2)[::sample_step, :2]
+
+        # Make sure both trajectories have the same number of frames
+        num_frames = min(len(trajectory1), len(trajectory2))
+        trajectory1 = trajectory1[:num_frames]
+        trajectory2 = trajectory2[:num_frames]
+
+        # Set up plot
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_title("Joystick Dot Simulation")
+        ax.set_xlabel("X Position")
+        ax.set_ylabel("Y Position")
+        ax.grid(True)
+
+        # Axis limits with margin, considering both trajectories
+        all_positions = np.vstack((trajectory1, trajectory2))
+
+        margin = 1.0
+        ax.set_xlim(
+            np.min(all_positions[:, 0]) - margin,
+            np.max(all_positions[:, 0]) + margin
+        )
+        ax.set_ylim(
+            np.min(all_positions[:, 1]) - margin,
+            np.max(all_positions[:, 1]) + margin
+        )
+
+        # Plot elements
+        path_line1, = ax.plot(
+            [], [], 'b--', alpha=0.5, label="Path 1"
+        )
+        dot1, = ax.plot(
+            [], [], 'ro', markersize=8, label="Dot 1"
+        )
+
+        path_line2, = ax.plot(
+            [], [], 'g--', alpha=0.5, label="Path 2"
+        )
+        dot2, = ax.plot(
+            [], [], 'bo', markersize=8, label="Dot 2"
+        )
+
+        if names:
+            ax.legend(names)
+        else:
+            ax.legend()
+
+        def init():
+            path_line1.set_data([], [])
+            dot1.set_data([], [])
+
+            path_line2.set_data([], [])
+            dot2.set_data([], [])
+
+            return path_line1, dot1, path_line2, dot2
+
+        def update(frame):
+            # Path 1
+            path_line1.set_data(
+                trajectory1[:frame + 1, 0],
+                trajectory1[:frame + 1, 1]
+            )
+            dot1.set_data(
+                [trajectory1[frame, 0]],
+                [trajectory1[frame, 1]]
+            )
+
+            # Path 2
+            path_line2.set_data(
+                trajectory2[:frame + 1, 0],
+                trajectory2[:frame + 1, 1]
+            )
+            dot2.set_data(
+                [trajectory2[frame, 0]],
+                [trajectory2[frame, 1]]
+            )
+
+            return path_line1, dot1, path_line2, dot2
+
+        anim = FuncAnimation(
+            fig,
+            update,
+            frames=num_frames,
+            init_func=init,
+            interval=(1000 / speed) / fps,
+            blit=True,
+            repeat=False
+        )
+
+        plt.show()
+
+    def animate_inputs(self, position, time, fps: int = 30, speed = 2):
         """
         Animates the dot moving based on a list of joystick inputs over time.
         
@@ -50,8 +158,9 @@ class JoystickDotSimulator:
         trajectory = []
        
         # Pre-compute positions frame-by-frame
+        sampsPerSec = time[-1] / (time[1] - time[0])
         prevTime = 0
-        for pos, t in zip(position[::30], time[::30]):
+        for pos, t in zip(position[::int(sampsPerSec/fps)], time[::int(sampsPerSec/fps)]):
             num_steps = 1 
             for _ in range(num_steps):
                 new_pos = np.array([pos[0], pos[1]])
@@ -88,7 +197,76 @@ class JoystickDotSimulator:
 
         anim = FuncAnimation(
             fig, update, frames=len(trajectory),
-            init_func=init, interval=1000/fps, blit=True, repeat=False
+            init_func=init, interval=(1000/speed)/fps, blit=True, repeat=False
+        )
+        plt.show()
+
+    def animate_joystick(self, velocities, interval=50, save_path=None):
+        """
+        Animates a 2D joystick given a list of velocity vectors.
+
+        Parameters:
+        - velocities: iterable of (vx, vy) tuples/lists representing 2D control input.
+        - interval: delay between frames in milliseconds (default: 50ms).
+        - save_path: optional string (e.g. 'joystick.gif' or 'joystick.mp4') to export.
+
+        Returns:
+        - anim: matplotlib.animation.FuncAnimation object.
+        """
+        velocities = np.array(velocities[::60])
+        
+        # Setup plot axis
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.set_xlim(-1.3, 1.3)
+        ax.set_ylim(-1.3, 1.3)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        # Base circle (joystick boundary limit)
+        base_circle = plt.Circle((0, 0), 1.0, color='#333333', fill=False, linewidth=3)
+        ax.add_patch(base_circle)
+        
+        # Crosshairs for visual reference
+        ax.axhline(0, color='#cccccc', linestyle='--', linewidth=1)
+        ax.axvline(0, color='#cccccc', linestyle='--', linewidth=1)
+
+        # Shaft and knob elements
+        shaft, = ax.plot([], [], color='#888888', linewidth=6, zorder=2)
+        knob = plt.Circle((0, 0), 0.15, color='#d9534f', zorder=3)
+        ax.add_patch(knob)
+
+        # On-screen text for current readout
+        readout = ax.text(0.05, 0.95, '', transform=ax.transAxes, 
+                        fontsize=10, family='monospace', verticalalignment='top')
+
+        def init():
+            shaft.set_data([], [])
+            knob.center = (0, 0)
+            readout.set_text('')
+            return shaft, knob, readout
+
+        def update(frame):
+            vx, vy = velocities[frame]
+            
+            # Clamp joystick position inside unit circle boundary
+            magnitude = np.hypot(vx, vy)
+            if magnitude > 1.0:
+                vx, vy = vx / magnitude, vy / magnitude
+
+            shaft.set_data([0, vx], [0, vy])
+            knob.center = (vx, vy)
+            readout.set_text(f"Vx: {vx:+.2f}\nVy: {vy:+.2f}")
+            
+            return shaft, knob, readout
+
+        anim = FuncAnimation(
+            fig, 
+            update, 
+            frames=len(velocities), 
+            init_func=init, 
+            interval=interval, 
+            blit=True, 
+            repeat=False
         )
         plt.show()
 
@@ -125,26 +303,3 @@ class JoystickDotSimulator:
         joint_pos = self.inverse_kinematics(pos)
         print("this shouldn't be getting called, fill the traj")
         return
-
-# --- Example Usage ---
-if __name__ == "__main__":
-    # Initialize simulator with max speed of 5.0 units/sec at starting position (0, 0)
-    sim = JoystickDotSimulator(max_speed=5.0, initial_pos=(0.0, 0.0))
-
-    # 1. Define target waypoints to reach
-    waypoints = [
-        (5.0, 0.0),
-        (5.0, 5.0),
-        (-2.0, 3.0),
-        (0.0, 0.0)
-    ]
-
-    # 2. Run Inverse Kinematics to get required joystick inputs
-    joystick_commands = sim.inverse_kinematics(waypoints)
-
-    print("Generated Joystick Commands (joy_x, joy_y, duration):")
-    for cmd in joystick_commands:
-        print(f"  X: {cmd[0]:6.2f}, Y: {cmd[1]:6.2f}, Time: {cmd[2]:5.2f}s")
-
-    # 3. Animate the dot moving along the calculated joystick inputs
-    sim.animate_inputs(joystick_commands, fps=30)

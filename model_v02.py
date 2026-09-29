@@ -200,7 +200,7 @@ def initViz(arm):
     viz.loadViewerModel()
     return viz
 
-def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
+def save_trajectories(trajectories, dt, filename="path_exp.pkl"):
     '''
     saves the travelled trajectories for further viewing
     without having to rerun the simulation
@@ -215,7 +215,7 @@ def save_trajectories(trajectories, arm_ids, dt, filename="path_exp.pkl"):
     '''
     filename.parent.mkdir(parents=True, exist_ok=True)
     data = {
-        key: {"arm": arm_ids[key], "pos": traj.pos, "dt":dt}
+        key: {"pos": traj.pos, "dt":dt}
         for key, traj in trajectories.items()
     }
     with open(filename, "wb") as f:
@@ -428,14 +428,13 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     #         joystick.step(v[0], v[1], dt)
     #     pos[i, :] = joystick.getPos()
     final_traj, errorTot = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
-    joystick.animate_inputs(final_traj.pos, time)
-    joystick.animate_inputs(traj_no_error.eePos, time)
-
+    joystick.animate_inputs_duo(final_traj.pos, traj_no_error.pos, time, 
+                                ["actual path", "actual pos", "desired path", "desired pos"])
+    joystick.animate_joystick(final_traj.vel)
     # saving trajectories
-    # trajectories = {1: traj_no_error, 2: cntrl_traj, 3: final_traj, 4: traj_w_error}
-    # arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: armFile}
-    # if save:
-    #     save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
+    trajectories = {1: traj_no_error, 2: final_traj}
+    if save:
+        save_trajectories(trajectories, time[1] - time[0], filename=exp.results)
         # save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
 
     # plotting 
@@ -458,11 +457,34 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     axs.set_xlabel("Trial")
     axs.set_ylabel("Mean Absolute Error")
     axs.set_title("Evolution of MAE")
-    axs.axhline(0.53)
     plt.show()
     wts = brain.pf_pc_wts
     plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
-    plt.colorbar()
+    plt.xlabel("PCs")
+    plt.ylabel("PFs")
+    plt.axvline(49, color='red', linestyle='--')
+    plt.axvline(99, color='red', linestyle='--')
+    plt.axvline(149, color='red', linestyle='--')
+    plt.colorbar(label='Conductance (S)')
+    labels = [
+        "Joint 1 Agonist",
+        "Joint 1 Antagonist",
+        "Joint 2 Agonist",
+        "Joint 2 Antagonist"
+    ]
+
+    # Centers of the four regions
+    centers = [25, 75, 125, 175]
+
+    for x, label in zip(centers, labels):
+        plt.text(
+            x, 
+            -0.05, 
+            label,
+            ha='center',
+            va='top',
+            transform=plt.gca().get_xaxis_transform()
+        )
     plt.show()
     # makes the sim in browser. Make sure looking at http://127.0.0.1:7000/static/ NOT http://127.0.0.1:7000
     # playVideo(time, trajectories, arm_ids, arm, arm)

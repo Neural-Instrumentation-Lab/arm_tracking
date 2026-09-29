@@ -72,7 +72,7 @@ class CFsubcomplexALT:
     MIN_SPIKE_FREQ = 1
     MAX_SPIKE_FREQ = 10
     MIN_ERROR = 0.001
-    MAX_ERROR = 0.01
+    MAX_ERROR = 0.1
 
     def __init__(self, n_neurons=50):
         self.n_neurons = n_neurons
