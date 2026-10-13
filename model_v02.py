@@ -238,81 +238,160 @@ def supervisor_torque(currPos, currVel, qMin, qMax, smoothing):
     smoothing = np.clip(smoothing, 0, 1)
     return correction, smoothing
 
+# def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
+#     '''
+#     Controls the arm with the cerebellar feedback loop
+#     Args:
+#         arm: arm to move along the trajectory
+#         traj_w_error: trajectory to move along in joint space (pos, vel, and torques)
+#         desired_ee_traj: trajectory of EE in cartesian coords (pos)
+#         time: time vector that corresponds to both ee and error trajectories
+#         brain: brain to compute correction
+#         nTrials: Number of times to repeat the trajectory
+#     Returns:
+#         final_traj: Trajectory object containing results from the final trajectory
+#         errorTot: joint position MAE over nTrials
+#         PCact: evolution of Purkinje Cells over nTrials
+#         mf_dcn: evolution of mf-dcn weights over nTrials
+#         pc_dcn: evolution of pc-dcn weights over nTrials
+
+#     '''
+#     # initialize the trajectory
+#     currPos       = desired_ee_traj.pos[0,:].copy() 
+#     currVel       = np.zeros_like(traj_w_error.vel[0,:])
+#     arm.move(currPos)
+#     final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos),
+#                             vel=np.zeros_like(traj_w_error.vel))
+#     errorTot = np.zeros(nTrials)
+#     # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
+#     step = int(round(len(time) / (np.floor(time[-1] / TIMESTEP) + 1), 0))
+#     prevP = np.zeros_like(traj_w_error.pos[0,:])
+#     qMin = [-1, -1] 
+#     qMax = [1, 1] 
+#     # brain commands and inputs stored for delay
+#     delEff = int(round(DEL_EFF * (len(time) / time[-1])))
+#     delAff = int(round(DEL_AFF * (len(time) / time[-1])))
+#     kp = [0.1, 0.1]
+#     errSig = np.zeros_like(currPos)
+#     qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
+#     prevErrors = deque()
+#     prevPos = deque()
+#     prevComm = deque()
+#     corrTorque = np.zeros_like(currPos)
+#     for trial in range(nTrials):
+#         for i, _ in enumerate(traj_w_error.pos):
+#             # compute error 
+#             qError  = desired_ee_traj.pos[i].copy() - arm.getPos().copy()
+#             qdError = desired_ee_traj.vel[i].copy() - corrTorque; 
+#             prevErrors.append((qError.copy(), qdError.copy()))
+#             prevPos.append((arm.getPos().copy(), desired_ee_traj.pos[i].copy(), corrTorque, desired_ee_traj.vel[i].copy()))
+#             if i >= delEff:
+#                 errSig = prevErrors.popleft()
+#                 qSig = prevPos.popleft()
+#             # compute corrections, but brain only fires once for every PF
+#             # the brain only computes for joints 1-6 not 7
+#             if i % step ==0: #or trial != 0:
+#                 corr = np.array([0, 0])
+#                 corr = brain.compute(qSig[0], qSig[1], errSig[0]) 
+#                 prevComm.append(corr)
+#                 if i >= delAff:
+#                     corrTorque = prevComm.popleft() #+ kp * qError
+#             # if i % 100 == 0:
+#             #     print(f"i: {i}, err: {errSig}, t: {corr}")
+#             # move the arm
+#             if i > 0:
+#                 dt      = time[i] - time[i-1]
+#                 arm.step(corrTorque[0], corrTorque[1], dt)
+#                 # print(arm.getPos(), corrTorque)
+#             final_traj.pos[i,:]   = arm.getPos()
+#             final_traj.vel[i,:]   = corrTorque
+#         print(f"trial {trial} done")
+#         currPos = desired_ee_traj.pos[0,:]
+#         arm.move(currPos.copy())
+#         prevErrors.clear()
+#         prevPos.clear()
+#         prevComm.clear()
+#         errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
+#     return final_traj, errorTot
+
 def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     '''
     Controls the arm with the cerebellar feedback loop
-    Args:
-        arm: arm to move along the trajectory
-        traj_w_error: trajectory to move along in joint space (pos, vel, and torques)
-        desired_ee_traj: trajectory of EE in cartesian coords (pos)
-        time: time vector that corresponds to both ee and error trajectories
-        brain: brain to compute correction
-        nTrials: Number of times to repeat the trajectory
-    Returns:
-        final_traj: Trajectory object containing results from the final trajectory
-        errorTot: joint position MAE over nTrials
-        PCact: evolution of Purkinje Cells over nTrials
-        mf_dcn: evolution of mf-dcn weights over nTrials
-        pc_dcn: evolution of pc-dcn weights over nTrials
-
     '''
-    # initialize the trajectory
-    currPos       = desired_ee_traj.pos[0,:].copy() 
-    currVel       = np.zeros_like(traj_w_error.vel[0,:])
-    arm.move(currPos)
-    final_traj    = armTraj(pos=np.zeros_like(traj_w_error.pos),
-                            vel=np.zeros_like(traj_w_error.vel))
+    # initialize parameters
+    n_steps = len(time)
+    final_traj = armTraj(pos=np.zeros_like(traj_w_error.pos),
+                         vel=np.zeros_like(traj_w_error.vel))
     errorTot = np.zeros(nTrials)
-    # brainResults = brainData(nTrials, len(time), arm.njoints, brain.getnPFs())
-    step = int(round(len(time) / (np.floor(time[-1] / TIMESTEP) + 1), 0))
-    prevP = np.zeros_like(traj_w_error.pos[0,:])
+    
+    step = int(round(n_steps / (np.floor(time[-1] / TIMESTEP) + 1), 0))
     qMin = [-1, -1] 
     qMax = [1, 1] 
+    
     # brain commands and inputs stored for delay
-    delEff = int(round(DEL_EFF * (len(time) / time[-1])))
-    delAff = int(round(DEL_AFF * (len(time) / time[-1])))
+    delEff = int(round(DEL_EFF * (n_steps / time[-1])))
+    delAff = int(round(DEL_AFF * (n_steps / time[-1])))
     kp = [0.1, 0.1]
-    errSig = np.zeros_like(currPos)
-    qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
-    prevErrors = deque()
-    prevPos = deque()
-    prevComm = deque()
-    corrTorque = np.zeros_like(currPos)
+    
     for trial in range(nTrials):
-        for i, _ in enumerate(traj_w_error.pos):
-            # compute error 
+        # 1. Pick a random starting index along the trajectory
+        start_idx = np.random.randint(0, n_steps)
+        
+        # 2. Move arm to that random starting position
+        currPos = desired_ee_traj.pos[start_idx, :].copy()
+        currVel = np.zeros_like(traj_w_error.vel[0,:])
+        arm.move(currPos)
+        
+        # Reset queues for the new trial
+        errSig = np.zeros_like(currPos)
+        qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
+        prevErrors = deque()
+        prevPos = deque()
+        prevComm = deque()
+        corrTorque = np.zeros_like(currPos)
+        
+        trial_actual_pos = []
+        
+        # 3. Iterate through one full trial cycle (n_steps)
+        for step_idx in range(n_steps):
+            # Wrap around the circular trajectory using modulo
+            i = (start_idx + step_idx) % n_steps
+            
+            # compute error using the wrapped trajectory index (i)
             qError  = desired_ee_traj.pos[i].copy() - arm.getPos().copy()
             qdError = desired_ee_traj.vel[i].copy() - corrTorque; 
             prevErrors.append((qError.copy(), qdError.copy()))
             prevPos.append((arm.getPos().copy(), desired_ee_traj.pos[i].copy(), corrTorque, desired_ee_traj.vel[i].copy()))
-            if i >= delEff:
+            
+            # Use trial timeline (step_idx) for delay logic
+            if step_idx >= delEff:
                 errSig = prevErrors.popleft()
                 qSig = prevPos.popleft()
-            # compute corrections, but brain only fires once for every PF
-            # the brain only computes for joints 1-6 not 7
-            if i % step ==0: #or trial != 0:
+                
+            # compute corrections (using trial timeline step_idx for frequency check)
+            if step_idx % step == 0:
                 corr = np.array([0, 0])
-                corr = brain.compute(qSig[0], qSig[1], qSig[2], qSig[3], errSig[0], errSig[1]) 
+                corr = brain.compute(qSig[0], qSig[1], errSig[0]) 
                 prevComm.append(corr)
-                if i >= delAff:
-                    corrTorque = prevComm.popleft() #+ kp * qError
-            # if i % 100 == 0:
-            #     print(f"i: {i}, err: {errSig}, t: {corr}")
+                if step_idx >= delAff:
+                    corrTorque = prevComm.popleft()
+                    
             # move the arm
-            if i > 0:
-                dt      = time[i] - time[i-1]
+            if step_idx > 0:
+                dt = time[step_idx] - time[step_idx-1]
                 arm.step(corrTorque[0], corrTorque[1], dt)
-                # print(arm.getPos(), corrTorque)
-            final_traj.pos[i,:]   = arm.getPos()
-            final_traj.vel[i,:]   = corrTorque
+                
+            trial_actual_pos.append(arm.getPos())
+            final_traj.pos[step_idx, :] = arm.getPos()
+            final_traj.vel[step_idx, :] = corrTorque
+            
         print(f"trial {trial} done")
-        currPos = desired_ee_traj.pos[0,:]
-        arm.move(currPos.copy())
-        prevErrors.clear()
-        prevPos.clear()
-        prevComm.clear()
-        errorTot[trial]  = np.sum([np.linalg.norm(des - act) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
-    return final_traj, errorTot
+        
+        # Calculate error comparing the exact desired sequence experienced during this trial
+        trial_desired_pos = np.array([desired_ee_traj.pos[(start_idx + s) % n_steps] for s in range(n_steps)])
+        errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des, act) in zip(trial_desired_pos, trial_actual_pos)])
+        
+    return final_traj, errorTot, start_idx
 
 def transform(traj, arm):
     '''
@@ -427,9 +506,16 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     #         dt      = time[i] - time[i-1]
     #         joystick.step(v[0], v[1], dt)
     #     pos[i, :] = joystick.getPos()
-    final_traj, errorTot = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
-    joystick.animate_inputs_duo(final_traj.pos, traj_no_error.pos, time, 
-                                ["actual path", "actual pos", "desired path", "desired pos"])
+    final_traj, errorTot, offset = runSimulation(joystick, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+    aligned_desired_pos = np.roll(traj_w_error.pos, -offset, axis=0) # or desired_ee_traj.pos, depending on what animate_inputs_duo expects
+    joystick.animate_inputs_duo(
+        final_traj.pos, 
+        aligned_desired_pos, 
+        time, 
+        ["actual path", "actual pos", "desired path", "desired pos"]
+    )
+    # joystick.animate_inputs_duo(final_traj.pos, traj_no_error.pos, time, 
+    #                             ["actual path", "actual pos", "desired path", "desired pos"])
     joystick.animate_joystick(final_traj.vel)
     # saving trajectories
     trajectories = {1: traj_no_error, 2: final_traj}

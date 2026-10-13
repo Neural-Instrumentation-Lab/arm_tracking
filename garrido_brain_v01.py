@@ -188,7 +188,7 @@ class cerebellum:
         self.nJoints = n_dof
         self.t = 0
         # these numbers are all PER JOINT
-        self.nMF_subgroups    = 4
+        self.nMF_subgroups    = 2
         self.nMF_per_subgroup = 10
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
         self.W_MF_GC   = 0.18e-9
@@ -255,7 +255,7 @@ class cerebellum:
         subgroup, via uniform binning.
         Returns
         -------
-        tuple of 4 ints, each in [0, N_MF_PER_SUBGROUP - 1]
+        tuple of 2 ints, each in [0, N_MF_PER_SUBGROUP - 1]
         """
         digits = []
         for value, (lo, hi) in zip(state, value_ranges):
@@ -267,10 +267,10 @@ class cerebellum:
 
     def address_to_gc_index(self, digits, nJoint):
         """Combine 4 base-10 digits into a single GC index in [0, 9999]."""
-        d0, d1, d2, d3 = digits
-        return (d0 + d1 * self.nMF_per_subgroup + d2 * self.nMF_per_subgroup**2 + d3 * self.nMF_per_subgroup**3) + nJoint*self.nGC
+        d0, d1 = digits
+        return (d0 + d1 * self.nMF_per_subgroup) + nJoint*self.nGC
 
-    def granularLayer(self, q, qdes, qd, qddes, dt):
+    def granularLayer(self, q, qdes, dt):
         self.gc_ampa_input.fill(0.0)
         """
         RBF BASED MF IMPLEMENTATION (NOT WORKING YET)
@@ -303,10 +303,8 @@ class cerebellum:
         ONE-HOT IMPLEMENTATION (WORKING BUT I DON'T THINK THIS IS HOW THEY DO IT
         """
         for j in range(self.nJoints):
-            digits = self.encode_mf_address((q[j], qdes[j], qd[j], qddes[j]), ((self.qmins[j], self.qmaxs[j]),
-                                                            (self.qmins[j], self.qmaxs[j]),
-                                                            (self.qdmins[j], self.qdmaxs[j]),
-                                                            (self.qdmins[j], self.qdmaxs[j])))
+            digits = self.encode_mf_address((q[j], qdes[j],), ((self.qmins[j], self.qmaxs[j]),
+                                                            (self.qmins[j], self.qmaxs[j])))
             addressed_index = self.address_to_gc_index(digits, j)
             self.gc_ampa_input[addressed_index] = self.W_MF_GC * 4 #self.nMF_subgroups
         self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
@@ -316,13 +314,12 @@ class cerebellum:
         max_error = 1 
         return 0.2+0.8*(1-np.exp(-error*90/max_error));
 
-    def climbingFibers(self, qErr, qdErr, dt):
+    def climbingFibers(self, qErr, dt):
         self.cf_output.fill(False)
         kp = np.array([1, 1])
-        kd = np.array([0.1, 0.1])
         # kp = np.ones(self.nJoints)*0.5
         # kd = np.ones(self.nJoints)*0.5/(2*np.pi)
-        sigError = kp * (qErr) + kd*(qdErr)
+        sigError = kp * (qErr)
         # pError = self.errorCalc(sigError)
         # nError = self.errorCalc(-sigError)
         pError = sigError
@@ -408,10 +405,10 @@ class cerebellum:
         corr = (self.TORQUE_ALPHA) * np.mean(self.prevDCN, axis=0)
         return corr
 
-    def compute(self, q, qdes, qd, qddes, qErr, qdErr, dt=2e-3):
+    def compute(self, q, qdes, qErr, dt=2e-3):
         # input fiber layers
-        self.granularLayer(q, qdes, qd, qddes, dt)
-        self.climbingFibers(qErr, qdErr, dt)
+        self.granularLayer(q, qdes, dt)
+        self.climbingFibers(qErr, dt)
         # now we have spikes from the PFs and the CFs in cf_output and pfs
         self.PCstep(dt)
         dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
