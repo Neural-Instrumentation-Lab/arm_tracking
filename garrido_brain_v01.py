@@ -189,14 +189,14 @@ class cerebellum:
         self.t = 0
         # these numbers are all PER JOINT
         self.nMF_subgroups    = 2
-        self.nMF_per_subgroup = 10
+        self.nMF_per_subgroup = 20
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
         self.W_MF_GC   = 0.18e-9
         self.W_PC_DCN  = 1e-9
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        self.TORQUE_ALPHA  = [0.06, 0.06]
+        self.TORQUE_ALPHA  = [0.12, 0.12]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
