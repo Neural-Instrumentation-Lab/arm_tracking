@@ -90,7 +90,7 @@ def main() -> None:
         return
 
     if not args.view:
-        model_v02.simulate(exp, args.save, not args.hide_output, not args.no_grav, args.makeMovie)
+        model_v02.simulate(exp, args.save, not args.hide_output, args.makeMovie)
     else:
         try:
             armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_arm" + exp.graphs.suffix))

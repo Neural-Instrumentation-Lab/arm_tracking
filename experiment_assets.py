@@ -10,6 +10,11 @@ from typing import Literal
 WeightGroup = Literal["pf_pc", "mf_dcn", "pc_dcn"]
 ALL_WEIGHT_GROUPS: tuple[WeightGroup, ...] = ("pf_pc", "mf_dcn", "pc_dcn")
 
+class brainData:
+    def __init__(self, nTrials, trajLen, nDCNs, nGCs, nPCs):
+        self.dcn     = np.zeros((nTrials, trajLen, nDCNs))
+        self.pf_pc   = np.zeros((nTrials, nGCs, nPCs)) 
+
 @dataclass(frozen=True)
 class Experiment:
     name: str                # short, unique, CLI-friendly id (e.g. "baseline_v1")
@@ -255,9 +260,7 @@ class Weights:
  
 def save_weights(
     fname: str | Path,
-    pf_pc: np.ndarray,
-    mf_dcn: np.ndarray,
-    pc_dcn: np.ndarray,
+    results : brainData,
     meta: dict | None = None,
 ) -> None:
     """Save final weights to an .npz archive, with an optional YAML metadata sidecar.
@@ -275,7 +278,7 @@ def save_weights(
     """
     fname = Path(fname)
     fname.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(fname, pf_pc=np.asarray(pf_pc), mf_dcn=np.asarray(mf_dcn), pc_dcn=np.asarray(pc_dcn))
+    np.savez(fname, pf_pc=np.asarray(results.pf_pc), dcn=np.asarray(results.dcn))
  
     if meta:
         meta_path = fname.with_suffix(".yaml")

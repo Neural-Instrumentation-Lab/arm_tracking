@@ -1,17 +1,20 @@
 import numpy as np
 from arm_assets_v02 import armTraj
+from experiment_assets import brainData
 from collections import deque
 DEL_AFF = 50e-3
 DEL_EFF = 50e-3
 TIMESTEP = 2e-3
-def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
+
+def runSimulation(arm, desired_traj, time, brain, nTrials):
     '''
     Controls the arm with the cerebellar feedback loop
     '''
     # initialize parameters
     n_steps = len(time)
-    final_traj = armTraj(pos=np.zeros_like(traj_w_error.pos),
-                         vel=np.zeros_like(traj_w_error.vel))
+    brainResults = brainData(nTrials, n_steps, brain.nDCN*brain.nJoints, brain.nGC*brain.nJoints, brain.nPC*brain.nJoints)
+    final_traj = armTraj(pos=np.zeros_like(desired_traj.pos),
+                         vel=np.zeros_like(desired_traj.vel))
     errorTot = np.zeros(nTrials)
     
     step = int(round(n_steps / (np.floor(time[-1] / TIMESTEP) + 1), 0))
@@ -28,8 +31,8 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         start_idx = np.random.randint(0, n_steps)
         
         # 2. Move arm to that random starting position
-        currPos = desired_ee_traj.pos[start_idx, :].copy()
-        currVel = np.zeros_like(traj_w_error.vel[0,:])
+        currPos = desired_traj.pos[start_idx, :].copy()
+        currVel = np.zeros_like(desired_traj.vel[0,:])
         arm.move(currPos)
         
         # Reset queues for the new trial
@@ -48,10 +51,10 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             i = (start_idx + step_idx) % n_steps
             
             # compute error using the wrapped trajectory index (i)
-            qError  = desired_ee_traj.pos[i].copy() - arm.getPos().copy()
-            qdError = desired_ee_traj.vel[i].copy() - corrTorque; 
+            qError  = desired_traj.pos[i].copy() - arm.getPos().copy()
+            qdError = desired_traj.vel[i].copy() - corrTorque; 
             prevErrors.append((qError.copy(), qdError.copy()))
-            prevPos.append((arm.getPos().copy(), desired_ee_traj.pos[i].copy(), corrTorque, desired_ee_traj.vel[i].copy()))
+            prevPos.append((arm.getPos().copy(), desired_traj.pos[i].copy(), corrTorque, desired_traj.vel[i].copy()))
             
             # Use trial timeline (step_idx) for delay logic
             if step_idx >= delEff:
@@ -74,11 +77,13 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             trial_actual_pos.append(arm.getPos())
             final_traj.pos[step_idx, :] = arm.getPos()
             final_traj.vel[step_idx, :] = corrTorque
+            brainResults.dcn[trial, step_idx, :] = brain.dcnOut
             
         print(f"trial {trial} done")
+        brainResults.pf_pc[trial, :] = brain.pf_pc_wts
         
         # Calculate error comparing the exact desired sequence experienced during this trial
-        trial_desired_pos = np.array([desired_ee_traj.pos[(start_idx + s) % n_steps] for s in range(n_steps)])
+        trial_desired_pos = np.array([desired_traj.pos[(start_idx + s) % n_steps] for s in range(n_steps)])
         errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des, act) in zip(trial_desired_pos, trial_actual_pos)])
         
-    return final_traj, errorTot, start_idx
+    return final_traj, errorTot, start_idx, brainResults

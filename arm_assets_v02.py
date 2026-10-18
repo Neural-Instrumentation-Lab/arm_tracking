@@ -497,3 +497,74 @@ class baxter_reduced(dynamic_3dof_arm):
             q = pin.integrate(self.model, q, v * dt)
             i += 1
         return q 
+
+class JoystickDotSimulator:
+    def __init__(self, max_speed=5.0, initial_pos=(0.0, 0.0)):
+        """
+        :param max_speed: Maximum units per second the dot can move.
+        :param initial_pos: Starting (x, y) coordinates.
+        """
+        self.max_speed = max_speed
+        self.pos = np.array(initial_pos, dtype=float)
+
+    def getPos(self):
+        return self.pos
+
+    def step(self, joy_x: float, joy_y: float, dt: float) -> np.ndarray:
+        """
+        Simulates the movement of the dot for a single timestep.
+        
+        :param joy_x: Joystick X input in range [-1.0, 1.0]
+        :param joy_y: Joystick Y input in range [-1.0, 1.0]
+        :param dt: Timestep in seconds
+        :return: Updated (x, y) position
+        """
+        joy_vector = np.array([joy_x, joy_y], dtype=float)
+        magnitude = np.linalg.norm(joy_vector)
+        
+        # Clamp joystick magnitude to max 1.0
+        # if magnitude > 1.0:
+        #     joy_vector = joy_vector / magnitude
+            
+        # Update position: Position = Position + (Joystick * MaxSpeed * dt)
+        self.pos += joy_vector * dt
+        self.pos = np.clip(self.pos, -2, 2)
+        return self.pos.copy()
+
+    def move(self, pos, vel=None, acc=None):
+        """sets cursor to a position"""
+        self.pos = pos
+
+    def inverse_kinematics(self, x, y, t):
+        """
+        Converts a list of target (X, Y) points into a sequence of joystick commands.
+        
+        :param points: List of target coordinates [(x1, y1), (x2, y2), ...]
+        :return: List of tuples [(joy_x, joy_y, duration), ...]
+        """
+
+        joint_pos = np.zeros((len(x), 2))
+        prevTime = 0
+        current = np.array([x[0], y[0]])
+        for i, target in enumerate(zip(x, y)):
+            target_pos = np.array(target, dtype=float)
+            displacement = target_pos - current
+            distance = np.linalg.norm(displacement)
+
+            if distance < 1e-6:
+                continue  # Already at target
+
+            if t[i] != 0:
+                dt = t[i] - prevTime
+                prevTime = t[i]
+                joy_x, joy_y = displacement / dt 
+                if np.linalg.norm([joy_x, joy_y]) > 1:
+                    print(f"can't reach from {current} to {target_pos} in {dt} s, {joy_x}, {joy_y}")
+                joint_pos[i, :] = np.array([joy_x, joy_y])
+            current = target_pos
+        return joint_pos
+
+    def makeJointData(self, pos, t):
+        # NOT TESTED
+        joint_pos = self.inverse_kinematics(pos[:, 0], pos[:, 1], t)
+        return joint_pos

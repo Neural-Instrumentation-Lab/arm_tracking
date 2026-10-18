@@ -211,6 +211,9 @@ class cerebellum:
         self.effDelay = 50e-3
         self.affDelay = 50e-3
 
+        # temp stuff to keep for saving brain results
+        self.dcnOut = np.zeros(self.nDCN*n_dof)
+
         # this AMPA input is constant from MF firing rate being constant
         # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.nMF_subgroups*n_dof*self.W_MF_DCN
         self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.W_MF_DCN
@@ -411,9 +414,9 @@ class cerebellum:
         self.climbingFibers(qErr, dt)
         # now we have spikes from the PFs and the CFs in cf_output and pfs
         self.PCstep(dt)
-        dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
+        self.dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
                              nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
                              gaba_input=(self.pc_out*self.W_PC_DCN))
-        corr = self.dcnToTorque(dcnOut, dt)
+        corr = self.dcnToTorque(self.dcnOut, dt)
         self.t += 1
         return(corr)
