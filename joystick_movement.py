@@ -299,7 +299,7 @@ class JoystickDotSimulator:
             current = target_pos
         return joint_pos
 
-    def makeJointData(self, pos, vel, acc):
-        joint_pos = self.inverse_kinematics(pos)
-        print("this shouldn't be getting called, fill the traj")
-        return
+    def makeJointData(self, pos, t):
+        # NOT TESTED
+        joint_pos = self.inverse_kinematics(pos[:, 0], pos[:, 1], t)
+        return joint_pos

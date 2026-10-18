@@ -2,7 +2,7 @@
 MODEL V01
 
 Implementation of cerebellar error correction
-with dynamic 3dof arm, the cerebellar model is 
+with joystick control, the cerebellar model is 
 from the paper "Distributed cerebellar plasticity implements adaptable gain control in a 
 manipulation task: a closed-loop robotic simulation" by Garrido et All
 
@@ -11,24 +11,24 @@ manipulation task: a closed-loop robotic simulation" by Garrido et All
 '''
 
 ## IMPORTS #####################################################################
+import sys
 import argparse
 import logging
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-import sys
-from arm_assets_v02 import dynamic_3dof_arm, dynamic_2dof_arm, armTraj, angle_diff, baxter_reduced
-from joystick_movement import JoystickDotSimulator
-from garrido_brain_v01 import cerebellum
-# import garrido_brain as gb
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
 import pickle
-from experiment_assets import load_trajectory, load_weights, save_weights, prepare_brain_weights
 import matplotlib.animation as animation
 from matplotlib.gridspec import GridSpec
 from pathlib import Path
 from collections import deque
+from arm_assets_v02 import armTraj
+from joystick_movement import JoystickDotSimulator
+from garrido_brain_v01 import cerebellum
+# import garrido_brain as gb
+from experiment_assets import load_trajectory
 from simulate import runSimulation
 from plot_results import plot_arm_results, plot_brain_results
 
@@ -108,12 +108,12 @@ def fillTrajectory(traj, arm):
     and computes missing joint positions thru IK makeJointData()
     """
     time = traj.time
-    if traj.velocity is None or traj.acceleration is None:
-        traj.velocity, traj.acceleration = getDerivatives(time, traj.position, dx=traj.velocity)
+    if traj.velocity is None:
+        traj.velocity, _ = getDerivatives(time, traj.position)
     if traj.joint_position is None:
-        traj.joint_position, traj.joint_velocity, traj.joint_acceleration = arm.makeJointData(traj.position, traj.velocity, traj.acceleration)
-    elif traj.joint_velocity is None or traj.joint_acceleration is None:
-        traj.joint_velocity, traj.joint_acceleration = getDerivatives(time, traj.joint_position, dx=traj.joint_velocity)
+        traj.joint_position = arm.makeJointData(traj.position, time)
+    elif traj.joint_velocity is None:
+        traj.joint_velocity, _ = getDerivatives(time, traj.joint_position)
     return traj
 
 def playVideo(time, trajectories, arm_ids, arm, illusoryArm, fps=30):
@@ -169,21 +169,19 @@ def simulate(exp, save, showOutput, grav, makeMovie):
         showOutput: whether to show output or not
         grav: whether gravity exists in sim or not
     """
-    trajFile   = exp.trajectory 
-    n_dof      = exp.nDof 
-    # instantiate limb, motor control unit, brain    
-    package_dirs = ["./"] 
-    brain           = cerebellum([-2, -1], [-1, -1], [2, 1], [1, 1], n_dof=2)
-    joystick = JoystickDotSimulator()
+    trajFile   = exp.trajectory
+    n_dof      = exp.nDof
+    joystick   = JoystickDotSimulator()
+    brain      = cerebellum([-2, -1], [-1, -1], [2, 1], [1, 1], n_dof=2)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
     # cartesian pos, vel, accel and joint-space q, qd, qdd. If not they will be calculated, 
-    # but this introduces noise in the double-differentation 
-    traj_data           = load_trajectory(trajFile)   
-    # traj_data           = fillTrajectory(traj_data, joystick)
+    # but this introduces noise in the double-differentation
+    traj_data           = load_trajectory(trajFile)
+    traj_data           = fillTrajectory(traj_data, joystick)
     time                = traj_data.time
-    desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity)
+    desired_ee_traj     = armTraj(pos=traj_data.position, vel=traj_data.velocity)
     traj_w_error        = armTraj(pos=traj_data.position, vel=traj_data.velocity)
     traj_no_error       = armTraj(pos=traj_data.position, vel=traj_data.velocity)
     traj_no_error.eePos = desired_ee_traj.pos
