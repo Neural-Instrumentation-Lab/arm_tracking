@@ -14,9 +14,8 @@ from __future__ import annotations
 import numpy as np
 import sympy as sp
 import argparse
-from arm_assets_v02 import dynamic_3dof_arm
+from arm_assets_v02 import dynamic_3dof_arm, JoystickDotSimulator
 from pathlib import Path
-from joystick_movement import JoystickDotSimulator
 import yaml
 
 TRAJ = Path("trajectories")
@@ -304,6 +303,23 @@ def create_traj_010():
     fname = TRAJ / "joystick.csv"
     save_data(fname,time=t, position=poses, velocity=vels)
 
+def create_traj_011():
+    # makes a circle trajectory for joystick control
+    fs = 1000
+    f = 1/3
+    t = np.arange(0, 3, 1/fs)
+    # cartesian
+    x = np.cos(2*np.pi*t*f)
+    y = np.sin(2*np.pi*t*f)
+    dx = -2*np.pi*f*np.sin(2*np.pi*t*f) 
+    dy = 2*np.pi*f*np.cos(2*np.pi*t*f) 
+    # joystick (joint) positions
+    joy = JoystickDotSimulator()
+    poses = np.concat([x.reshape(-1, 1), y.reshape(-1, 1)], axis=1)
+    vels = np.concat([dx.reshape(-1, 1), dy.reshape(-1, 1)], axis=1)
+    fname = TRAJ / "small_timestep.csv"
+    save_data(fname,time=t, position=poses, velocity=vels)
+
 
 
 ## MAIN ###################################################################
@@ -348,6 +364,7 @@ def main():
     elif args.trajectory_id == '8': create_traj_008()
     elif args.trajectory_id == '9': create_traj_009()
     elif args.trajectory_id == '10': create_traj_010()
+    elif args.trajectory_id == '11': create_traj_011()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")

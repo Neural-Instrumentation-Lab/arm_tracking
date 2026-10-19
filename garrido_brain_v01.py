@@ -196,7 +196,7 @@ class cerebellum:
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        self.TORQUE_ALPHA  = [0.12, 0.12]
+        self.TORQUE_ALPHA  = [.12, .12]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -417,6 +417,7 @@ class cerebellum:
         self.dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
                              nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
                              gaba_input=(self.pc_out*self.W_PC_DCN))
+        # print(self.dcnOut.any())
         corr = self.dcnToTorque(self.dcnOut, dt)
         self.t += 1
         return(corr)

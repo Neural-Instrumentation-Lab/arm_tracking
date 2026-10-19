@@ -558,8 +558,8 @@ class JoystickDotSimulator:
                 dt = t[i] - prevTime
                 prevTime = t[i]
                 joy_x, joy_y = displacement / dt 
-                if np.linalg.norm([joy_x, joy_y]) > 1:
-                    print(f"can't reach from {current} to {target_pos} in {dt} s, {joy_x}, {joy_y}")
+                # if np.linalg.norm([joy_x, joy_y]) > 1:
+                #     print(f"can't reach from {current} to {target_pos} in {dt} s, {joy_x}, {joy_y}")
                 joint_pos[i, :] = np.array([joy_x, joy_y])
             current = target_pos
         return joint_pos

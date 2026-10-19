@@ -18,20 +18,20 @@ HOW TO WATCH TRAJECTORIES:
 """
 class Trajectory:
     """Lightweight stand-in so traj.pos still works like before."""
-    def __init__(self, pos, arm, dt):
+    def __init__(self, pos, vel, dt):
         self.pos = pos
-        self.arm = arm
+        self.vel = vel
         self.dt  = dt
  
 
 def load_trajectories(filename="path_exp.pkl"):
     with open(filename, "rb") as f:
         data = pickle.load(f)
-    return {key: Trajectory(v["pos"], v["arm"], v["dt"]) for key, v in data.items()}
+    return {key: Trajectory(v["pos"], v["vel"], v["dt"]) for key, v in data.items()}
  
 def play_traj(exp):
     trajectories = load_trajectories(filename=exp.results)
-    animate_combined(trajectories[2], trajectories[1])
+    animate_combined(trajectories[2], trajectories[1], np.arange(len(trajectories[1].pos[0,:]))*trajectories[1].dt)
  
 def _make_joystick(ax, title, color):
     """Draw a static joystick background on `ax` and return the animated artists."""

@@ -72,7 +72,7 @@ def save_trajectories(trajectories, dt, filename="path_exp.pkl"):
     '''
     filename.parent.mkdir(parents=True, exist_ok=True)
     data = {
-        key: {"pos": traj.pos, "dt":dt}
+        key: {"pos": traj.pos, "vel" : traj.vel, "dt":dt}
         for key, traj in trajectories.items()
     }
     with open(filename, "wb") as f:
@@ -120,7 +120,11 @@ def simulate(exp, save, showOutput, makeMovie):
     final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, nTrials=exp.nTrials)
     # the simulation has a random start point, so we unroll by offset
     # saving trajectories
-    trajectories = {1: desired_traj, 2: final_traj}
+    aligned_desired_pos = np.roll(desired_traj.pos, -offset, axis=0) 
+    aligned_desired_vel = np.roll(desired_traj.vel, -offset, axis=0) 
+    aligned_des = armTraj(pos= aligned_desired_pos, vel=aligned_desired_vel)
+
+    trajectories = {1: aligned_des, 2: final_traj}
     if save:
         save_trajectories(trajectories, time[1] - time[0], filename=exp.results)
         save_weights(exp.finalWts, brainResults)
@@ -128,9 +132,6 @@ def simulate(exp, save, showOutput, makeMovie):
     # showing results 
     if showOutput:
         # have to align because of random start point
-        aligned_desired_pos = np.roll(desired_traj.pos, -offset, axis=0) 
-        aligned_desired_vel = np.roll(desired_traj.vel, -offset, axis=0) 
-        aligned_des = armTraj(pos= aligned_desired_pos, vel=aligned_desired_vel)
         animate_combined(final_traj, aligned_des, time)
     plot_arm_results(final_traj, aligned_des, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_brain_results(errorTot, time, brain, show=showOutput, saveLoc=exp.graphs, save=save)

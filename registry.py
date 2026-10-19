@@ -30,20 +30,6 @@ EXPERIMENTS: dict[str, Experiment] = {
             load_weight_groups = (),
         ),
         Experiment(
-            name="trial_100",
-            description="100 trials of the baxter on circular trajectory",
-            trajectory=TRAJS / "circleTrajInterp.csv",
-            actualArm=ARMS / "baxter_fixed.urdf",
-            illusoryArm=ARMS / "baxter_fixed.urdf",
-            results=RESUL / "trial_100.pkl",
-            finalWts=WTS / "trial_100.npz",
-            graphs=GRAPH / "trial_100.png",
-            videos=VIDEO / "trial_100.mp4",
-            nDof=7,
-            nTrials=100,
-            load_weight_groups = (),
-        ),
-        Experiment(
             name="joystick",
             description="wooo yeah",
             trajectory=TRAJS / "joystick.csv",
@@ -54,9 +40,22 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "joystick.png",
             videos=VIDEO / "joystick.mp4",
             nDof=2,
-            nTrials=100,
+            nTrials=50,
+            load_weight_groups = (),
+        ),
+        Experiment(
+            name="small_timestep",
+            description="test small timestep to make sure neuron sim is working",
+            trajectory=TRAJS / "small_timestep.csv",
+            actualArm=ARMS / "baxter_fixed.urdf",
+            illusoryArm=ARMS / "baxter_fixed.urdf",
+            results=RESUL / "small_timestep.pkl",
+            finalWts=WTS / "small_timestep.npz",
+            graphs=GRAPH / "small_timestep.png",
+            videos=VIDEO / "small_timestep.mp4",
+            nDof=2,
+            nTrials=150,
             load_weight_groups = (),
         )
-
     ]
 }

@@ -93,13 +93,17 @@ def main() -> None:
         model_v02.simulate(exp, args.save, not args.hide_output, args.makeMovie)
     else:
         try:
-            armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_arm" + exp.graphs.suffix))
-            brainPlot = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_brain" + exp.graphs.suffix))
+            armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_commands" + exp.graphs.suffix))
+            brainPlot = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_MAE" + exp.graphs.suffix))
+            maePlot = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_pf_pc_wts" + exp.graphs.suffix))
             plt.imshow(armPlot)
             plt.axis('off')
             plt.show()
             plt.axis('off')
             plt.imshow(brainPlot)
+            plt.show()
+            plt.axis('off')
+            plt.imshow(maePlot)
             plt.show()
             play_arm_path.play_traj(exp)
         except FileNotFoundError:

@@ -64,7 +64,7 @@ def runSimulation(arm, desired_traj, time, brain, nTrials):
             # compute corrections (using trial timeline step_idx for frequency check)
             if step_idx % step == 0:
                 corr = np.array([0, 0])
-                corr = brain.compute(qSig[0], qSig[1], errSig[0]) 
+                corr = brain.compute(qSig[0], qSig[1], errSig[0], dt=TIMESTEP) 
                 prevComm.append(corr)
                 if step_idx >= delAff:
                     corrTorque = prevComm.popleft()
