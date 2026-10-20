@@ -40,7 +40,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "joystick.png",
             videos=VIDEO / "joystick.mp4",
             nDof=2,
-            nTrials=50,
+            nTrials=200,
             load_weight_groups = (),
         ),
         Experiment(
@@ -54,8 +54,23 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "small_timestep.png",
             videos=VIDEO / "small_timestep.mp4",
             nDof=2,
-            nTrials=150,
+            nTrials=50,
+            load_weight_groups = (),
+        ),
+        Experiment(
+            name="small_dt_brain",
+            description="test small timestep to make sure neuron sim is working",
+            trajectory=TRAJS / "small_timestep.csv",
+            actualArm=ARMS / "baxter_fixed.urdf",
+            illusoryArm=ARMS / "baxter_fixed.urdf",
+            results=RESUL / "small_dt_brain.pkl",
+            finalWts=WTS / "small_dt_brain.npz",
+            graphs=GRAPH / "small_dt_brain.png",
+            videos=VIDEO / "small_dt_brain.mp4",
+            nDof=2,
+            nTrials=50,
             load_weight_groups = (),
         )
+
     ]
 }

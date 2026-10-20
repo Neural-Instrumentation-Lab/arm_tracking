@@ -24,6 +24,7 @@ from pathlib import Path
 from collections import deque
 from arm_assets_v02 import armTraj, JoystickDotSimulator
 from garrido_brain_v01 import cerebellum
+# from garrido_brain_small_dt import cerebellum
 # import garrido_brain as gb
 from experiment_assets import load_trajectory, save_weights, brainData
 from simulate import runSimulation
@@ -104,7 +105,7 @@ def simulate(exp, save, showOutput, makeMovie):
     trajFile   = exp.trajectory
     n_dof      = exp.nDof
     joystick   = JoystickDotSimulator()
-    brain      = cerebellum([-2, -1], [-1, -1], [2, 1], [1, 1], n_dof=2)
+    brain      = cerebellum([-2, -1], [2, 1], n_dof=2)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 

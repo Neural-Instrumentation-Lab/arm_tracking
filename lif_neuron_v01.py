@@ -34,7 +34,7 @@ class lif_neuron:
  
     def _nmda_inf(self) -> float:
         """Voltage-dependent NMDA activation gate, Eq. (10)."""
-        return (1.0 / (1.0 + np.exp(62.0 * self.V))) * (1.2 / 3.57)
+        return (1.0 / (1.0 + np.exp(-62.0 * self.V))) * (1.2 / 3.57)
  
     def _decay_conductances(self, dt: float = 2e-3):
         """Exponential decay of synaptic conductances between spike inputs. Eq (7-9)"""
@@ -188,15 +188,15 @@ class LIFPopulation:
             self.g_GABA += gaba_input
  
  
-        # 4) Integrate membrane potential (Eqs. 4-6), only for non-refractory neurons
-        I_internal = -p.gL * (self.V - p.EL)
-        g_nmda_inf = self._nmda_inf(self.V)
-        I_external = (
-            -(self.g_AMPA + self.g_NMDA * g_nmda_inf) * (self.V - p.E_AMPA)
-            - self.g_GABA * (self.V - p.E_GABA)
-        )
-        dV = (I_internal + I_external) / p.Cm * dt
-        self.V = np.where(active, self.V + dV, self.V)
+        # 4) Integrate membrane potential (Eqs. 4-6), only for non-refractory neurons.
+        #    Conductances are held for the tick, so V relaxes exponentially toward V_inf.
+        #    (Forward Euler was unstable here: Cm/G < dt for GC and DCN at 2 ms, which made
+        #    strong GABA input overshoot past threshold, i.e. PC inhibition acted as excitation.)
+        g_exc = self.g_AMPA + self.g_NMDA * self._nmda_inf(self.V)
+        G = p.gL + g_exc + self.g_GABA
+        V_inf = (p.gL * p.EL + g_exc * p.E_AMPA + self.g_GABA * p.E_GABA) / G
+        V_new = V_inf + (self.V - V_inf) * np.exp(-dt * G / p.Cm)
+        self.V = np.where(active, V_new, self.V)
  
         # 5) Threshold check -> spike, reset, refractory period (only for
         #    neurons that were free to integrate this step)

@@ -176,15 +176,13 @@ class cerebellum:
     DEFAULT_MF_VALUE_RANGES = (
         (-2, 2),    # q      (actual position)
         (-1, 1),    # q_des  (desired position)
-        (-1, 1),    # q_des  (desired position)
-        (-1, 1),    # q_des  (desired position)
     )
     ALPHA = 0.002e-9          # (S)
     BETA  = -0.001e-9         # (S)
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
-    def __init__(self, qMins, qdMins, qMaxs, qdesMaxs, n_dof=6):
+    def __init__(self, qMins, qMaxs, n_dof=6):
         self.nJoints = n_dof
         self.t = 0
         # these numbers are all PER JOINT
@@ -196,7 +194,7 @@ class cerebellum:
         self.W_MF_DCN   = 0.1e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        self.TORQUE_ALPHA  = [.12, .12]
+        self.TORQUE_ALPHA  = [.24, .24]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -205,8 +203,8 @@ class cerebellum:
 
         self.qmins = qMins
         self.qmaxs = qMaxs
-        self.qdmins = qMins
-        self.qdmaxs = qMaxs
+        # self.qdmins = qMins
+        # self.qdmaxs = qMaxs
 
         self.effDelay = 50e-3
         self.affDelay = 50e-3
@@ -226,10 +224,10 @@ class cerebellum:
         self.CF_complexes  = [CFsubcomplexALT(n_neurons=int(self.nCF/2)) for _ in range(self.nJoints*2)] 
         self.cf_output     = np.zeros(self.nCF * n_dof, dtype=np.bool)
 
-        self.MF_complexesQ      = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
-        self.MF_complexesQdes   = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
-        self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdesMaxs)]
-        self.MF_complexesQddes  = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdesMaxs)]
+        # self.MF_complexesQ      = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
+        # self.MF_complexesQdes   = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
+        # self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdesMaxs)]
+        # self.MF_complexesQddes  = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdesMaxs)]
         self.mf_out     = np.zeros(self.nMF * n_dof, dtype=np.float64)
 
         self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
@@ -319,7 +317,7 @@ class cerebellum:
 
     def climbingFibers(self, qErr, dt):
         self.cf_output.fill(False)
-        kp = np.array([1, 1])
+        kp = np.array([3, 3])
         # kp = np.ones(self.nJoints)*0.5
         # kd = np.ones(self.nJoints)*0.5/(2*np.pi)
         sigError = kp * (qErr)
@@ -327,8 +325,9 @@ class cerebellum:
         # nError = self.errorCalc(-sigError)
         pError = sigError
         nError = -sigError
-        agonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
-        antagonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
+        # positive error -> agonist microzone (DCN half that pushes +)
+        agonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
+        antagonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
         for j in range(self.nJoints):
             epsAgon  = agonist[j]
             epsAAgon = antagonist[j]
