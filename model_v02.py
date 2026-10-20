@@ -149,7 +149,7 @@ def plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=True, s
     plt.colorbar()
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_pf_pc_wts" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
     plt.close()
@@ -163,7 +163,7 @@ def plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=True, s
     axs.legend(["Brain Error", "No Brain Error"])
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(saveLoc.with_name(saveLoc.stem + "_arm" + saveLoc.suffix), dpi=300)
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
     plt.close(fig)
