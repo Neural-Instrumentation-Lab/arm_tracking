@@ -4,11 +4,15 @@ from experiment_assets import brainData
 from collections import deque
 DEL_AFF = 50e-3
 DEL_EFF = 50e-3
-TIMESTEP = 2e-3
 
-def runSimulation(arm, desired_traj, time, brain, nTrials):
+def runSimulation(arm, desired_traj, time, brain, nTrials, brain_dt, reset=True):
     '''
     Controls the arm with the cerebellar feedback loop
+
+    reset: if True, every trial starts at a random point on the trajectory with the
+           arm moved there and the delay queues cleared. If False, only the first trial
+           does this and later trials continue from where the previous one ended
+           (the trajectory is periodic).
     '''
     # initialize parameters
     n_steps = len(time)
@@ -17,9 +21,7 @@ def runSimulation(arm, desired_traj, time, brain, nTrials):
                          vel=np.zeros_like(desired_traj.vel))
     errorTot = np.zeros(nTrials)
     
-    step = int(round(n_steps / (np.floor(time[-1] / TIMESTEP) + 1), 0))
-    qMin = [-1, -1] 
-    qMax = [1, 1] 
+    step = int(round(n_steps / (np.floor(time[-1] / brain_dt) + 1), 0))
     
     # brain commands and inputs stored for delay
     delEff = int(round(DEL_EFF * (n_steps / time[-1])))
@@ -27,21 +29,25 @@ def runSimulation(arm, desired_traj, time, brain, nTrials):
     kp = [0.1, 0.1]
     
     for trial in range(nTrials):
-        # 1. Pick a random starting index along the trajectory
-        start_idx = np.random.randint(0, n_steps)
-        
-        # 2. Move arm to that random starting position
-        currPos = desired_traj.pos[start_idx, :].copy()
-        currVel = np.zeros_like(desired_traj.vel[0,:])
-        arm.move(currPos)
-        
-        # Reset queues for the new trial
-        errSig = np.zeros_like(currPos)
-        qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
-        prevErrors = deque()
-        prevPos = deque()
-        prevComm = deque()
-        corrTorque = np.zeros_like(currPos)
+        if reset or trial == 0:
+            # 1. Pick a random starting index along the trajectory
+            start_idx = np.random.randint(0, n_steps)
+            
+            # 2. Move arm to that random starting position
+            currPos = desired_traj.pos[start_idx, :].copy()
+            currVel = np.zeros_like(desired_traj.vel[0,:])
+            arm.move(currPos)
+            
+            # Reset queues for the new trial
+            errSig = (np.zeros_like(currPos), np.zeros_like(currVel))
+            qSig = (np.zeros_like(currPos), np.zeros_like(currVel), np.zeros_like(currPos), np.zeros_like(currVel))
+            prevErrors = deque()
+            prevPos = deque()
+            prevComm = deque()
+            corrTorque = np.zeros_like(currPos)
+            
+            # steps since the last reset, used for delay and brain-rate timing
+            elapsed = 0
         
         trial_actual_pos = []
         
@@ -56,23 +62,24 @@ def runSimulation(arm, desired_traj, time, brain, nTrials):
             prevErrors.append((qError.copy(), qdError.copy()))
             prevPos.append((arm.getPos().copy(), desired_traj.pos[i].copy(), corrTorque, desired_traj.vel[i].copy()))
             
-            # Use trial timeline (step_idx) for delay logic
-            if step_idx >= delEff:
+            # Use steps since last reset for delay logic
+            if elapsed >= delEff:
                 errSig = prevErrors.popleft()
                 qSig = prevPos.popleft()
                 
-            # compute corrections (using trial timeline step_idx for frequency check)
-            if step_idx % step == 0:
+            # compute corrections (using steps since last reset for frequency check)
+            if elapsed % step == 0:
                 corr = np.array([0, 0])
-                corr = brain.compute(qSig[0], qSig[1], errSig[0], dt=TIMESTEP) 
+                corr = brain.compute(qSig[0], qSig[1], errSig[0], dt=brain_dt) 
                 prevComm.append(corr)
-                if step_idx >= delAff:
+                if elapsed >= delAff:
                     corrTorque = prevComm.popleft()
                     
             # move the arm
-            if step_idx > 0:
-                dt = time[step_idx] - time[step_idx-1]
+            if elapsed > 0:
+                dt = time[max(step_idx, 1)] - time[max(step_idx, 1)-1]
                 arm.step(corrTorque[0], corrTorque[1], dt)
+            elapsed += 1
                 
             trial_actual_pos.append(arm.getPos())
             final_traj.pos[step_idx, :] = arm.getPos()

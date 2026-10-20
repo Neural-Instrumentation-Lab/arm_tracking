@@ -6,7 +6,7 @@ Ignacio Abadía , Francisco Naveros , Jesús A. Garrido , Eduardo Ros , and Nice
 import numpy as np
 from collections import deque
 from dataclasses import dataclass
-from lif_neuron_small_dt import LIFPopulation, NeuronParams, legacy_charge_gain, legacy_tonic_conductance
+from lif_neuron_v02 import LIFPopulation, NeuronParams, legacy_charge_gain, legacy_tonic_conductance
 from arm_assets_v02 import angle_diff
 class BrainError(Exception): pass
 
@@ -18,6 +18,11 @@ LEGACY_DT = 2e-3
 # Set to False to use Table-I weights as-is (each spike then delivers exactly w*tau).
 # True keeps the *effective* drive you tuned at 2 ms, so a dt change alone shouldn't move behavior.
 KEEP_LEGACY_DRIVE = True
+# True uses v01's refractory rule (blocks ceil(T_ref/dt)-1 whole ticks), plus v01's W_MF_DCN and
+# TORQUE_ALPHA, so at dt = 2 ms this brain reproduces v01 exactly.  At 2 ms that rule blocks
+# nothing (every T_ref here is <= 2 ms), so results will NOT hold up as dt shrinks.
+# False uses exact refractory periods, which give consistent results across dt.
+KEEP_LEGACY_REFRACTORY = True
 PF_HISTORY_S = 0.4        # PF spike history kept for LTD (was 200 ticks @ 2 ms)
 TORQUE_FILTER_S = 0.030   # mean-filter window (was 15 taps @ 2 ms)
 CF_BURST_ISI_S = 0.002    # spacing of spikes inside a CF burst (was 1 tick @ 2 ms)
@@ -215,10 +220,16 @@ class cerebellum:
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
         self.W_MF_GC   = 0.18e-9
         self.W_PC_DCN  = 1e-9
-        self.W_MF_DCN   = 0.2e-9 
-        self.W_CF_DCN_AMPA  = 0.5e-9*2
-        self.W_CF_DCN_NMDA  = 0.25e-9*2
-        self.TORQUE_ALPHA  = [.24, .24]
+        # exact refractory blocks PCs for a whole 2 ms tick after each spike, so PCs inhibit the
+        # DCN less and DCN output roughly doubles; these were retuned for that
+        if KEEP_LEGACY_REFRACTORY:
+            self.W_MF_DCN      = 0.1e-9
+            self.TORQUE_ALPHA  = [.24, .24]
+        else:
+            self.W_MF_DCN      = 0.2e-9
+            self.TORQUE_ALPHA  = [.12, .12]
+        self.W_CF_DCN_AMPA  = 0.5e-9
+        self.W_CF_DCN_NMDA  = 0.25e-9
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -258,7 +269,7 @@ class cerebellum:
         else:
             self.gain_pc_ampa = self.gain_dcn_ampa = self.gain_dcn_nmda = self.gain_dcn_gaba = 1.0
 
-        self.gcNeurons     = LIFPopulation(n=self.nGC * n_dof, params=GC_params)
+        self.gcNeurons     = LIFPopulation(n=self.nGC * n_dof, params=GC_params, legacy_refractory=KEEP_LEGACY_REFRACTORY)
         self.gc_tonic      = np.zeros(self.nGC * n_dof, dtype=np.float64)
         self.pf_history = PFSpikeHistory(prune_window=int(round(PF_HISTORY_S / dt)))
 
@@ -274,8 +285,8 @@ class cerebellum:
         self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
         self.pc_out = np.zeros(self.nPC * n_dof, dtype=bool)
 
-        self.pcNeurons     = LIFPopulation(n=self.nPC * n_dof, params=PC_params)
-        self.dcnNeurons    = LIFPopulation(n=self.nDCN * n_dof, params=DCN_params)
+        self.pcNeurons     = LIFPopulation(n=self.nPC * n_dof, params=PC_params, legacy_refractory=KEEP_LEGACY_REFRACTORY)
+        self.dcnNeurons    = LIFPopulation(n=self.nDCN * n_dof, params=DCN_params, legacy_refractory=KEEP_LEGACY_REFRACTORY)
 
         self.nTaps         = max(1, int(round(TORQUE_FILTER_S / dt)))
         self.prevDCN       = np.zeros((self.nTaps, self.nJoints))

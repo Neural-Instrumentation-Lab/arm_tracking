@@ -61,6 +61,10 @@ def main() -> None:
         "--makeMovie", action="store_true",
         help="outputs movie file. For a 1500 trial experiment, adds considerable runtime (2m 30s)."
     )
+    parser.add_argument(
+        "--noReset", action="store_true",
+        help="Don't reset the arm to a random start point each trial; trials run back to back"
+    )
 
     args = parser.parse_args()
 
@@ -82,15 +86,16 @@ def main() -> None:
     if args.dry_run:
         print(f"[dry run] '{exp.name}' looks valid:")
         print(f"  trajectory: {exp.trajectory}")
-        print(f"  actualArm:      {exp.actualArm}")
-        print(f"  illusoryArm:      {exp.illusoryArm}")
         print(f"  results:      {exp.results}")
         print(f"  initWts:      {exp.initialWts}")
-        print(f"  nDof:      {exp.nDof}\n")
+        print(f"  nDof:      {exp.nDof}")
+        print(f"  qMins:      {exp.qMins}")
+        print(f"  qMaxs:      {exp.qMaxs}")
+        print(f"  brain_timestep:      {exp.brain_timestep}\n")
         return
 
     if not args.view:
-        model_v02.simulate(exp, args.save, not args.hide_output, args.makeMovie)
+        model_v02.simulate(exp, args.save, not args.hide_output, args.makeMovie, reset=not args.noReset)
     else:
         try:
             armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_commands" + exp.graphs.suffix))
@@ -108,7 +113,7 @@ def main() -> None:
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")
-            model_v02.simulate(exp, True, True, True)
+            model_v02.simulate(exp, True, True, True, reset=not args.noReset)
 
 
 if __name__ == "__main__":

@@ -1,133 +1,127 @@
 #pragma once
-// Direct port of lif_neuron_v01.py
+// Direct port of lif_neuron_v02.py
+//
+// dt-independent conductance-based LIF population (Eqs. 4-10 of Abadia et al. 2021):
+//   - each synaptic conductance is integrated exactly over a tick (its tick mean is used),
+//     and V is advanced with the closed-form solution for that frozen conductance, so it is
+//     stable for any dt and every spike delivers exactly w*tau of conductance-time.
+//   - `ampa_tonic` is a constant AMPA conductance that bypasses the spike/decay state.
+//   - refractory handling is time-exact, unless legacy_refractory reproduces v01's rule.
+// See the docstring at the top of lif_neuron_v02.py for the full rationale.
 
 #include <vector>
 #include <cmath>
 #include <cstdint>
-#include <limits>
+#include <cstddef>
 #include <algorithm>
-#include <optional>
 #include "neuron_params.hpp"
 
+// Charge per spike delivered by the v01 update order (decay, add, forward Euler) at
+// timestep dt0, divided by the exact w*tau:   dt0 / (tau * (1 - exp(-dt0/tau))).
+// Multiply a spike-driven weight by this to reproduce the drive you had tuned at dt0.
+inline double legacy_charge_gain(double tau, double dt0 = 2e-3) {
+    return dt0 / (tau * (1.0 - std::exp(-dt0 / tau)));
+}
+
+// Mean conductance produced by injecting weight `w` EVERY tick in the v01 update order at
+// dt0 (steady-state sawtooth value right after the add):  w / (1 - exp(-dt0/tau)).
+// Pass this as `ampa_tonic` to reproduce the drive you had tuned at dt0.
+inline double legacy_tonic_conductance(double w, double tau, double dt0 = 2e-3) {
+    return w / (1.0 - std::exp(-dt0 / tau));
+}
+
+// Jahr-Stevens Mg block, Eq. (10): 1/(1 + 1.2/3.57 * exp(-62 V)), V in volts.
+inline double nmda_inf(double V) {
+    return 1.0 / (1.0 + std::exp(-62.0 * V) * (1.2 / 3.57));
+}
+
 // ---------------------------------------------------------------------
-// Scalar single-neuron model (lif_neuron_v01.py:lif_neuron).
-// Not used by cerebellum (which only ever uses LIFPopulation), but ported
-// for parity with the original module's public interface.
-//
-// NOTE (preserved quirk, not "fixed"): the scalar class's NMDA activation
-// gate uses a different algebraic form than LIFPopulation's:
-//   scalar:      (1 / (1 + exp( 62*V))) * (1.2/3.57)
-//   population:   1 / (1 + exp(-62*V)  * (1.2/3.57))
-// These are NOT equivalent. This mirrors the Python source exactly -- see
-// LIFNeuron::_nmda_inf vs LIFPopulation::_nmda_inf below.
+// Scalar reference neuron (lif_neuron_v02.py:lif_neuron). Not used by
+// cerebellum (which only uses LIFPopulation); ported for parity.
 // ---------------------------------------------------------------------
 class LIFNeuron {
 public:
     explicit LIFNeuron(const NeuronParams& params = NeuronParams())
-        : p(params), V(params.EL), g_AMPA(0.0), g_NMDA(0.0), g_GABA(0.0),
-          refact_t(0.0), spiked(false), t(0.0) {}
+        : p(params), V(params.EL) {}
 
     NeuronParams p;
-
-    // State variables
     double V;
-    double g_AMPA;
-    double g_NMDA;
-    double g_GABA;
-    double refact_t;
-    bool spiked;
-
-    // Bookkeeping
+    double g_AMPA = 0.0;
+    double g_NMDA = 0.0;
+    double g_GABA = 0.0;
+    double refact_t = 0.0;
+    bool spiked = false;
     std::vector<double> spike_times;
-    double t;
-
-    double _nmda_inf() const {
-        return (1.0 / (1.0 + std::exp(62.0 * V))) * (1.2 / 3.57);
-    }
-
-    void _decay_conductances(double dt = 2e-3) {
-        g_AMPA *= std::exp(-dt / p.tau_AMPA);
-        g_NMDA *= std::exp(-dt / p.tau_NMDA);
-        g_GABA *= std::exp(-dt / p.tau_GABA);
-    }
-
-    void _apply_synaptic_inputs(const std::vector<double>& ampa_weights,
-                                 const std::vector<double>& nmda_weights,
-                                 const std::vector<double>& gaba_weights) {
-        for (double w : ampa_weights) g_AMPA += w;
-        for (double w : nmda_weights) g_NMDA += w;
-        for (double w : gaba_weights) g_GABA += w;
-    }
+    double t = 0.0;
 
     bool step(double dt = 2.0e-3,
               const std::vector<double>& ampa_weights = {},
               const std::vector<double>& nmda_weights = {},
               const std::vector<double>& gaba_weights = {}) {
         spiked = false;
-
-        // Refractory period: membrane potential held at reset, no integration
-        if (refact_t > 0.0) {
+        for (double w : ampa_weights) g_AMPA += w;
+        for (double w : nmda_weights) g_NMDA += w;
+        for (double w : gaba_weights) g_GABA += w;
+        const double eA = std::exp(-dt / p.tau_AMPA);
+        const double eN = std::exp(-dt / p.tau_NMDA);
+        const double eG = std::exp(-dt / p.tau_GABA);
+        const double gA = g_AMPA * p.tau_AMPA / dt * (1 - eA);
+        const double gN = g_NMDA * p.tau_NMDA / dt * (1 - eN) * nmda_inf(V);
+        const double gG = g_GABA * p.tau_GABA / dt * (1 - eG);
+        g_AMPA *= eA; g_NMDA *= eN; g_GABA *= eG;
+        if (refact_t > 1e-12) {
             refact_t = std::max(0.0, refact_t - dt);
-            _decay_conductances(dt);
-            _apply_synaptic_inputs(ampa_weights, nmda_weights, gaba_weights);
             t += dt;
             return false;
         }
-
-        // 1: update conductances
-        _decay_conductances(dt);
-        _apply_synaptic_inputs(ampa_weights, nmda_weights, gaba_weights);
-
-        // compute currents
-        double I_int = -p.gL * (V - p.EL);
-        double g_nmda_inf = _nmda_inf();
-        double I_ext = -(g_AMPA + g_NMDA * g_nmda_inf) * (V - p.E_AMPA)
-                       - g_GABA * (V - p.E_GABA);
-
-        // calculate membrane potential
-        double dV = (I_int + I_ext) / p.Cm * dt;
-        V += dV;
-
-        // see if spiked
+        const double G = p.gL + gA + gN + gG;
+        const double Vinf = (p.gL * p.EL + (gA + gN) * p.E_AMPA + gG * p.E_GABA) / G;
+        V = Vinf + (V - Vinf) * std::exp(-dt * G / p.Cm);
         if (V >= p.V_thr) {
             spiked = true;
             V = p.EL;
             refact_t = p.T_ref;
             spike_times.push_back(t);
         }
-
         t += dt;
         return spiked;
     }
 };
 
 // ---------------------------------------------------------------------
-// Vectorized population of N LIF neurons sharing one NeuronParams
-// (lif_neuron_v01.py:LIFPopulation). This is the class cerebellum.py
-// actually uses.
+// Population of N neurons sharing one NeuronParams
+// (lif_neuron_v02.py:LIFPopulation). This is the class cerebellum uses.
 //
-// Synaptic inputs (ampa_input / nmda_input / gaba_input) are per-neuron
-// totals for this timestep -- already summed across any coincident
-// presynaptic spikes, matching the numpy version's calling convention.
-// Passing std::nullopt is equivalent to Python's `None` (skip that
-// receptor type entirely, same as all-zero input but slightly cheaper).
+// step(dt, ampa_input, nmda_input, gaba_input, ampa_tonic)
+//   *_input    : per-neuron summed synaptic weights of the spikes ARRIVING this tick (S).
+//                Each spike delivers exactly w*tau of conductance-time, any dt.
+//   ampa_tonic : per-neuron constant AMPA conductance (S) for this tick.
+// Pass nullptr for any input to skip it (Python's None). Non-null pointers must
+// point at n doubles. Returns the per-neuron spike flags for this tick.
 // ---------------------------------------------------------------------
 class LIFPopulation {
 public:
-    LIFPopulation(std::size_t n, const NeuronParams& params = NeuronParams())
+    // refractory countdown is considered finished below this (s)
+    static constexpr double REF_EPS = 1e-12;
+
+    LIFPopulation(std::size_t n, const NeuronParams& params = NeuronParams(),
+                  bool legacy_refractory = false)
         : n(n), p(params),
+          // true reproduces v01's refractory rule (see step); only meaningful at the dt it was tuned at
+          legacy_refractory(legacy_refractory),
           V(n, params.EL),
           g_AMPA(n, 0.0),
           g_NMDA(n, 0.0),
           g_GABA(n, 0.0),
           refractory_time_left(n, 0.0),
           spike_counts(n, 0),
-          t(0.0) {}
+          spiked(n, 0) {}
 
     std::size_t size() const { return n; }
 
     std::size_t n;
     NeuronParams p;
+    bool legacy_refractory;
 
     std::vector<double> V;
     std::vector<double> g_AMPA;
@@ -135,70 +129,79 @@ public:
     std::vector<double> g_GABA;
     std::vector<double> refractory_time_left;
     std::vector<int64_t> spike_counts;
-    double t;
+    std::vector<uint8_t> spiked;
+    double t = 0.0;
 
-    static double _nmda_inf_scalar(double v) {
-        // Eq. (10), vectorized version's formula (differs from the scalar
-        // LIFNeuron class -- see note above LIFNeuron).
-        return 1.0 / (1.0 + std::exp(-62.0 * v) * (1.2 / 3.57));
-    }
-
-    // ampa_input / nmda_input / gaba_input: pass std::nullopt for "None".
-    // When provided, must have size() == n.
-    std::vector<uint8_t> step(double dt,
-                               const std::optional<std::vector<double>>& ampa_input = std::nullopt,
-                               const std::optional<std::vector<double>>& nmda_input = std::nullopt,
-                               const std::optional<std::vector<double>>& gaba_input = std::nullopt) {
-        std::vector<uint8_t> spiked(n, 0);
-
-        const double decay_ampa = std::exp(-dt / p.tau_AMPA);
-        const double decay_nmda = std::exp(-dt / p.tau_NMDA);
-        const double decay_gaba = std::exp(-dt / p.tau_GABA);
-
-        const std::vector<double>* ampa_ptr = ampa_input ? &(*ampa_input) : nullptr;
-        const std::vector<double>* nmda_ptr = nmda_input ? &(*nmda_input) : nullptr;
-        const std::vector<double>* gaba_ptr = gaba_input ? &(*gaba_input) : nullptr;
+    const std::vector<uint8_t>& step(double dt,
+                                     const double* ampa_input = nullptr,
+                                     const double* nmda_input = nullptr,
+                                     const double* gaba_input = nullptr,
+                                     const double* ampa_tonic = nullptr) {
+        if (dt != prepared_dt_) prepare(dt);
 
         for (std::size_t i = 0; i < n; ++i) {
-            // 3) Advance refractory countdown
-            refractory_time_left[i] = std::max(0.0, refractory_time_left[i] - dt);
-            const bool active = refractory_time_left[i] <= 0.0;
+            // Refractory: a neuron integrates only for the part of this tick that is left after
+            // its refractory time.  (v01 decremented first and then tested, which blocked only
+            // ceil(T_ref/dt)-1 whole ticks -- i.e. NO refractory at all whenever T_ref <= dt.)
+            double t_act;
+            if (legacy_refractory) {
+                // v01 rule: whole ticks only, blocked while the countdown is still > 0 after decrementing
+                double r = std::max(0.0, refractory_time_left[i] - dt);
+                if (r <= REF_EPS) r = 0.0;
+                refractory_time_left[i] = r;
+                t_act = (r > 0.0) ? 0.0 : dt;
+            } else {
+                t_act = std::clamp(dt - refractory_time_left[i], 0.0, dt);
+                refractory_time_left[i] = std::max(0.0, refractory_time_left[i] - dt);
+            }
+            const bool active = t_act > REF_EPS;
 
-            // 1) Decay existing conductances for every neuron (Eqs. 7-9)
-            g_AMPA[i] *= decay_ampa;
-            g_NMDA[i] *= decay_nmda;
-            g_GABA[i] *= decay_gaba;
+            // spikes arriving at the start of this tick (refractory neurons still receive them)
+            if (ampa_input) g_AMPA[i] += ampa_input[i];
+            if (nmda_input) g_NMDA[i] += nmda_input[i];
+            if (gaba_input) g_GABA[i] += gaba_input[i];
 
-            // 2) Add new synaptic input -- applies to refractory neurons too,
-            //    matching LIFNeuron's behavior.
-            if (ampa_ptr) g_AMPA[i] += (*ampa_ptr)[i];
-            if (nmda_ptr) g_NMDA[i] += (*nmda_ptr)[i];
-            if (gaba_ptr) g_GABA[i] += (*gaba_ptr)[i];
+            // mean conductances over the tick
+            double gA = g_AMPA[i] * mean_ampa_;
+            if (ampa_tonic) gA = gA + ampa_tonic[i];
+            const double gN = g_NMDA[i] * mean_nmda_ * nmda_inf(V[i]);
+            const double gG = g_GABA[i] * mean_gaba_;
+            const double G = p.gL + gA + gN + gG;
+            const double V_inf = (p.gL * p.EL + (gA + gN) * p.E_AMPA + gG * p.E_GABA) / G;
+            // exact solution over the non-refractory part of the tick (t_act == 0 leaves V at reset)
+            V[i] = V_inf + (V[i] - V_inf) * std::exp(-t_act * G / p.Cm);
 
-            if (!active) continue;
+            // conductances decay for the next tick
+            g_AMPA[i] *= decay_ampa_;
+            g_NMDA[i] *= decay_nmda_;
+            g_GABA[i] *= decay_gaba_;
 
-            // 4) Integrate membrane potential (Eqs. 4-6), only for
-            //    non-refractory neurons
-            const double Vi = V[i];
-            const double I_internal = -p.gL * (Vi - p.EL);
-            const double g_nmda_inf = _nmda_inf_scalar(Vi);
-            const double I_external = -(g_AMPA[i] + g_NMDA[i] * g_nmda_inf) * (Vi - p.E_AMPA)
-                                       - g_GABA[i] * (Vi - p.E_GABA);
-            const double dV = (I_internal + I_external) / p.Cm * dt;
-            const double V_new = Vi + dV;
-
-            // 5) Threshold check -> spike, reset, refractory period
-            if (V_new >= p.V_thr) {
-                spiked[i] = 1;
+            const bool s = active && (V[i] >= p.V_thr);
+            spiked[i] = s;
+            if (s) {
                 V[i] = p.EL;
                 refractory_time_left[i] = p.T_ref;
                 spike_counts[i] += 1;
-            } else {
-                V[i] = V_new;
             }
         }
 
         t += dt;
         return spiked;
+    }
+
+private:
+    double prepared_dt_ = -1.0;
+    double decay_ampa_ = 0.0, decay_nmda_ = 0.0, decay_gaba_ = 0.0;
+    double mean_ampa_ = 0.0, mean_nmda_ = 0.0, mean_gaba_ = 0.0;
+
+    void prepare(double dt) {
+        prepared_dt_ = dt;
+        decay_ampa_ = std::exp(-dt / p.tau_AMPA);
+        decay_nmda_ = std::exp(-dt / p.tau_NMDA);
+        decay_gaba_ = std::exp(-dt / p.tau_GABA);
+        // mean of exp(-s/tau) over one tick
+        mean_ampa_ = p.tau_AMPA / dt * (1.0 - decay_ampa_);
+        mean_nmda_ = p.tau_NMDA / dt * (1.0 - decay_nmda_);
+        mean_gaba_ = p.tau_GABA / dt * (1.0 - decay_gaba_);
     }
 };

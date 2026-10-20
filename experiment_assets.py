@@ -20,14 +20,15 @@ class Experiment:
     name: str                # short, unique, CLI-friendly id (e.g. "baseline_v1")
     description: str         # one-line human explanation, shown in --list
     trajectory: Path         # the 1 trajectory file
-    actualArm: Path          # the 2 arm files
-    illusoryArm: Path
     results: Path            # where .pkl of arm trajectories is stored
     finalWts : Path          # where .npz of brain weights is stored
     graphs : Path            # where .pngs of results are stored 
     videos : Path            # where .mp4 of video results are stored 
     nDof : int # how many degrees of freedom arm has
     nTrials : int # how many times the traj is repeated
+    qMins : tuple[float, ...] # per-joint lower bound of the brain's MF encoding range, length nDof
+    qMaxs : tuple[float, ...] # per-joint upper bound of the brain's MF encoding range, length nDof
+    brain_timestep : float = 2e-3 # (s) how often the brain is stepped during the sim
     load_weight_groups: tuple[WeightGroup, ...] = field(default_factory=tuple) # which sites are to be loaded from initialWts file
     initialWts: Path | None = None        # .npz of initial weights of brain, only sites specified from load_weight_groups loaded
     defaultWts: Path | None = None        # .npz file with initial weights of the sites not in load_weight_groups. If not given defaults to 0s
@@ -43,13 +44,18 @@ class Experiment:
                 Standalone/single-experiment runs should leave this empty.
         """
         problems = []
-        for label, path in [
-            ("trajectory", self.trajectory),
-            ("actualArm", self.actualArm),
-            ("illusoryArm", self.illusoryArm),
-        ]:
-            if not path.exists():
-                problems.append(f"{label} file not found: {path}")
+        if not self.trajectory.exists():
+            problems.append(f"trajectory file not found: {self.trajectory}")
+
+        if len(self.qMins) != self.nDof or len(self.qMaxs) != self.nDof:
+            problems.append(
+                f"qMins/qMaxs must have nDof={self.nDof} entries "
+                f"(got {len(self.qMins)} and {len(self.qMaxs)})"
+            )
+        elif any(lo >= hi for lo, hi in zip(self.qMins, self.qMaxs)):
+            problems.append(f"every qMins entry must be < its qMaxs entry: {self.qMins} vs {self.qMaxs}")
+        if self.brain_timestep <= 0:
+            problems.append(f"brain_timestep must be positive (got {self.brain_timestep})")
  
         unknown = set(self.load_weight_groups) - set(ALL_WEIGHT_GROUPS)
         if unknown:

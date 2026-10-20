@@ -10,10 +10,42 @@
 
 namespace py = pybind11;
 
+using DoubleArray = py::array_t<double, py::array::c_style | py::array::forcecast>;
+
+// copy of a 0/1 byte vector as a numpy bool array
+static py::array_t<bool> to_bool_array(const std::vector<uint8_t>& v) {
+    py::array_t<bool> out(v.size());
+    auto* dst = out.mutable_data();
+    for (std::size_t i = 0; i < v.size(); ++i) dst[i] = v[i] != 0;
+    return out;
+}
+
+// LIFPopulation inputs: None, a scalar (broadcast to n), or an array of length n.
+// `storage` keeps the converted data alive for the duration of the call.
+static const double* population_input(const py::object& obj, std::size_t n, const char* name,
+                                      std::vector<double>& storage) {
+    if (obj.is_none()) return nullptr;
+    DoubleArray arr = DoubleArray::ensure(obj);
+    if (!arr) throw py::type_error(std::string(name) + " must be None, a number or an array");
+    if (arr.size() == 1) {
+        storage.assign(n, *arr.data());
+    } else if (static_cast<std::size_t>(arr.size()) == n) {
+        storage.assign(arr.data(), arr.data() + n);
+    } else {
+        throw py::value_error(std::string(name) + " must have length n=" + std::to_string(n));
+    }
+    return storage.data();
+}
+
 PYBIND11_MODULE(garrido_brain, m) {
-    m.doc() = "C++/pybind11 port of garrido_brain_v01.py + lif_neuron_v01.py";
+    m.doc() = "C++/pybind11 port of garrido_brain_v02.py + lif_neuron_v02.py";
 
     py::register_exception<BrainError>(m, "BrainError");
+
+    m.attr("LEGACY_DT") = LEGACY_DT;
+    m.attr("PF_HISTORY_S") = PF_HISTORY_S;
+    m.attr("TORQUE_FILTER_S") = TORQUE_FILTER_S;
+    m.attr("CF_BURST_ISI_S") = CF_BURST_ISI_S;
 
     // ---------------- NeuronParams ----------------
     py::class_<NeuronParams>(m, "NeuronParams")
@@ -39,6 +71,14 @@ PYBIND11_MODULE(garrido_brain, m) {
         .def_readwrite("tau_NMDA", &NeuronParams::tau_NMDA)
         .def_readwrite("tau_GABA", &NeuronParams::tau_GABA);
 
+    m.attr("GC_params") = GC_params;
+    m.attr("PC_params") = PC_params;
+    m.attr("DCN_params") = DCN_params;
+
+    m.def("legacy_charge_gain", &legacy_charge_gain, py::arg("tau"), py::arg("dt0") = 2e-3);
+    m.def("legacy_tonic_conductance", &legacy_tonic_conductance,
+          py::arg("w"), py::arg("tau"), py::arg("dt0") = 2e-3);
+
     // ---------------- LIFNeuron (scalar) ----------------
     py::class_<LIFNeuron>(m, "LIFNeuron")
         .def(py::init<const NeuronParams&>(), py::arg("params") = NeuronParams())
@@ -57,11 +97,23 @@ PYBIND11_MODULE(garrido_brain, m) {
 
     // ---------------- LIFPopulation ----------------
     py::class_<LIFPopulation>(m, "LIFPopulation")
-        .def(py::init<std::size_t, const NeuronParams&>(), py::arg("n"), py::arg("params") = NeuronParams())
-        .def("step", &LIFPopulation::step, py::arg("dt"),
-             py::arg("ampa_input") = py::none(), py::arg("nmda_input") = py::none(), py::arg("gaba_input") = py::none())
+        .def(py::init<std::size_t, const NeuronParams&, bool>(),
+             py::arg("n"), py::arg("params") = NeuronParams(), py::arg("legacy_refractory") = false)
+        .def("step", [](LIFPopulation& pop, double dt, const py::object& ampa_input,
+                        const py::object& nmda_input, const py::object& gaba_input,
+                        const py::object& ampa_tonic) {
+                 std::vector<double> a, nm, g, tonic;
+                 const double* pa = population_input(ampa_input, pop.n, "ampa_input", a);
+                 const double* pn = population_input(nmda_input, pop.n, "nmda_input", nm);
+                 const double* pg = population_input(gaba_input, pop.n, "gaba_input", g);
+                 const double* pt = population_input(ampa_tonic, pop.n, "ampa_tonic", tonic);
+                 return to_bool_array(pop.step(dt, pa, pn, pg, pt));
+             },
+             py::arg("dt"), py::arg("ampa_input") = py::none(), py::arg("nmda_input") = py::none(),
+             py::arg("gaba_input") = py::none(), py::arg("ampa_tonic") = py::none())
         .def("__len__", &LIFPopulation::size)
         .def_readonly("n", &LIFPopulation::n)
+        .def_readonly("legacy_refractory", &LIFPopulation::legacy_refractory)
         .def_readwrite("V", &LIFPopulation::V)
         .def_readwrite("g_AMPA", &LIFPopulation::g_AMPA)
         .def_readwrite("g_NMDA", &LIFPopulation::g_NMDA)
@@ -82,12 +134,16 @@ PYBIND11_MODULE(garrido_brain, m) {
 
     // ---------------- CFsubcomplexALT ----------------
     py::class_<CFsubcomplexALT>(m, "CFsubcomplexALT")
-        .def(py::init<int>(), py::arg("n_neurons") = 50)
-        .def("step", &CFsubcomplexALT::step, py::arg("dt"), py::arg("inp_I"))
+        .def(py::init<int, std::optional<uint64_t>>(), py::arg("n_neurons") = 50, py::arg("seed") = py::none())
+        .def("step", [](CFsubcomplexALT& c, double dt, double inp_I) {
+                 return to_bool_array(c.step(dt, inp_I));
+             }, py::arg("dt"), py::arg("inp_I"))
         .def_readonly("n_neurons", &CFsubcomplexALT::n_neurons)
         .def_readonly("centers", &CFsubcomplexALT::centers)
         .def_readonly("widths", &CFsubcomplexALT::widths)
-        .def_readonly("spikes_pending", &CFsubcomplexALT::spikes_pending);
+        .def_readonly("spikes_pending", &CFsubcomplexALT::spikes_pending)
+        .def_readonly("wait", &CFsubcomplexALT::wait)
+        .def_readwrite("draw_override", &CFsubcomplexALT::draw_override);
 
     // ---------------- MFsubcomplex ----------------
     py::class_<MFsubcomplex>(m, "MFsubcomplex")
@@ -99,15 +155,15 @@ PYBIND11_MODULE(garrido_brain, m) {
 
     // ---------------- PFSpikeHistory ----------------
     py::class_<PFSpikeHistory>(m, "PFSpikeHistory")
-        .def(py::init<double>(), py::arg("prune_window") = PFSpikeHistory::HISTORY_PRUNE_WINDOW)
+        .def(py::init<int64_t>(), py::arg("prune_window") = PFSpikeHistory::HISTORY_PRUNE_WINDOW)
         .def("record", &PFSpikeHistory::record, py::arg("indices"), py::arg("t"))
         .def("prune", &PFSpikeHistory::prune, py::arg("current_t"))
         .def("flatten", [](const PFSpikeHistory& h) {
-            std::vector<int64_t> idx;
-            std::vector<double> times;
+            std::vector<int64_t> idx, times;
             h.flatten(idx, times);
-            return py::make_tuple(idx, times);
+            return py::make_tuple(py::array(py::cast(idx)), py::array(py::cast(times)));
         })
+        .def_readonly("prune_window", &PFSpikeHistory::prune_window)
         .def("__len__", &PFSpikeHistory::size);
 
     // ---------------- free functions ----------------
@@ -118,19 +174,70 @@ PYBIND11_MODULE(garrido_brain, m) {
 
     // ---------------- cerebellum ----------------
     py::class_<cerebellum>(m, "cerebellum")
-        .def(py::init<std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::size_t>(),
-             py::arg("qMins"), py::arg("qdMins"), py::arg("qMaxs"), py::arg("qdMaxs"), py::arg("n_dof") = 6)
-        .def("compute", &cerebellum::compute,
-             py::arg("q"), py::arg("qd"), py::arg("qdes"), py::arg("qddes"),
-             py::arg("qErr"), py::arg("qdErr"), py::arg("dt") = 2e-3)
+        .def(py::init<std::vector<double>, std::vector<double>, std::size_t, double, bool, bool,
+                      std::optional<uint64_t>>(),
+             py::arg("qMins"), py::arg("qMaxs"), py::arg("n_dof") = 6, py::arg("dt") = LEGACY_DT,
+             py::arg("keep_legacy_drive") = true, py::arg("keep_legacy_refractory") = true,
+             py::arg("seed") = py::none())
+        .def("compute", [](cerebellum& c, const std::vector<double>& q, const std::vector<double>& qdes,
+                           const std::vector<double>& qErr, std::optional<double> dt) {
+                 auto corr = c.compute(q, qdes, qErr, dt);
+                 return py::array(py::cast(corr));
+             },
+             py::arg("q"), py::arg("qdes"), py::arg("qErr"), py::arg("dt") = py::none())
+        .def("set_cf_draw_override", &cerebellum::set_cf_draw_override, py::arg("value"),
+             "Testing only: fix every climbing-fiber random draw to `value` (None restores the RNG).")
+        .def_readonly_static("ALPHA", &cerebellum::ALPHA)
+        .def_readonly_static("BETA", &cerebellum::BETA)
+        .def_readonly_static("INIT_PF_PC_WT", &cerebellum::INIT_PF_PC_WT)
+        .def_readonly_static("W_MIN", &cerebellum::W_MIN)
+        .def_readonly_static("W_MAX", &cerebellum::W_MAX)
+        .def_readonly_static("nMF_subgroups", &cerebellum::nMF_subgroups)
+        .def_readonly_static("nMF_per_subgroup", &cerebellum::nMF_per_subgroup)
+        .def_readonly_static("nMF", &cerebellum::nMF)
+        .def_readonly_static("nGC", &cerebellum::nGC)
+        .def_readonly_static("nCF", &cerebellum::nCF)
+        .def_readonly_static("nPC", &cerebellum::nPC)
+        .def_readonly_static("nDCN", &cerebellum::nDCN)
+        .def_readonly_static("W_MF_GC", &cerebellum::W_MF_GC)
+        .def_readonly_static("W_PC_DCN", &cerebellum::W_PC_DCN)
+        .def_readonly_static("W_CF_DCN_AMPA", &cerebellum::W_CF_DCN_AMPA)
+        .def_readonly_static("W_CF_DCN_NMDA", &cerebellum::W_CF_DCN_NMDA)
+        .def_readonly("W_MF_DCN", &cerebellum::W_MF_DCN)
+        .def_readwrite("TORQUE_ALPHA", &cerebellum::TORQUE_ALPHA)
         .def_readonly("nJoints", &cerebellum::nJoints)
+        .def_readonly("dt", &cerebellum::dt)
+        .def_readonly("timeStep", &cerebellum::dt)
         .def_readonly("t", &cerebellum::t)
-        .def_readonly("pfs", &cerebellum::pfs)
-        .def_readonly("cf_output", &cerebellum::cf_output)
-        .def_readonly("pc_out", &cerebellum::pc_out)
-        .def_property_readonly("pf_pc_wts", [](const cerebellum& c) {
-            // Expose the (large) flat weight matrix as a 2D numpy array view.
+        .def_readonly("keep_legacy_drive", &cerebellum::keep_legacy_drive)
+        .def_readonly("keep_legacy_refractory", &cerebellum::keep_legacy_refractory)
+        .def_readonly("qmins", &cerebellum::qmins)
+        .def_readonly("qmaxs", &cerebellum::qmaxs)
+        .def_readonly("gc_tonic_value", &cerebellum::gc_tonic_value)
+        .def_readonly("mf_dcn_value", &cerebellum::mf_dcn_value)
+        .def_readonly("gain_pc_ampa", &cerebellum::gain_pc_ampa)
+        .def_readonly("gain_dcn_ampa", &cerebellum::gain_dcn_ampa)
+        .def_readonly("gain_dcn_nmda", &cerebellum::gain_dcn_nmda)
+        .def_readonly("gain_dcn_gaba", &cerebellum::gain_dcn_gaba)
+        .def_readonly("nTaps", &cerebellum::nTaps)
+        .def_readonly("kernelLookup", &cerebellum::kernelLookup)
+        .def_readonly("gcNeurons", &cerebellum::gcNeurons)
+        .def_readonly("pcNeurons", &cerebellum::pcNeurons)
+        .def_readonly("dcnNeurons", &cerebellum::dcnNeurons)
+        .def_readonly("pf_history", &cerebellum::pf_history)
+        .def_property_readonly("pfs", [](const cerebellum& c) { return to_bool_array(c.pfs); })
+        .def_property_readonly("cf_output", [](const cerebellum& c) { return to_bool_array(c.cf_output); })
+        .def_property_readonly("pc_out", [](const cerebellum& c) { return to_bool_array(c.pc_out); })
+        .def_property_readonly("dcnOut", [](const cerebellum& c) { return to_bool_array(c.dcnOut); })
+        .def_property_readonly("prevDCN", [](const cerebellum& c) {
+            DoubleArray out({c.nTaps, c.nJoints});
+            std::copy(c.prevDCN.begin(), c.prevDCN.end(), out.mutable_data());
+            return out;
+        })
+        .def_property_readonly("pf_pc_wts", [](py::object self) {
+            // writable 2D view onto the weight matrix; keeps the brain alive while it exists
+            auto& c = self.cast<cerebellum&>();
             const std::size_t rows = c.pf_pc_wts.size() / c.n_pc_total;
-            return py::array_t<double>({rows, c.n_pc_total}, c.pf_pc_wts.data());
+            return py::array_t<double>({rows, c.n_pc_total}, c.pf_pc_wts.data(), self);
         });
 }

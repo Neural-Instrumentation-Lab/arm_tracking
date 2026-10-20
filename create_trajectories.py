@@ -63,6 +63,7 @@ def get_trajectory_list():
     str = '\n'
     str += '0   : single point located at (7.07, 12.07)\n'
     str += '1   : horizontal line at y = 12\n'
+    str += '12  : joystick figure 8 with harmonics, 10s period, fs=1000 (complex_periodic.csv)\n'
     return str
 
 ## TRAJECTORY WRITING FUNCTIONS ################################################
@@ -320,6 +321,24 @@ def create_traj_011():
     fname = TRAJ / "small_timestep.csv"
     save_data(fname,time=t, position=poses, velocity=vels)
 
+def create_traj_012():
+    # makes a harder periodic trajectory for joystick control: a figure 8
+    # with 3rd/5th harmonics added so it has several lobes and direction changes.
+    # period T, |vel| stays under 1 on both axes
+    fs = 1000
+    T = 10
+    w = 2*np.pi/T
+    t = np.arange(0, T, 1/fs)
+    # cartesian
+    x = 0.7*np.sin(w*t) + 0.25*np.sin(3*w*t)
+    y = 0.5*np.sin(2*w*t) + 0.1*np.cos(5*w*t)
+    dx = 0.7*w*np.cos(w*t) + 0.75*w*np.cos(3*w*t)
+    dy = 1.0*w*np.cos(2*w*t) - 0.5*w*np.sin(5*w*t)
+    poses = np.concat([x.reshape(-1, 1), y.reshape(-1, 1)], axis=1)
+    vels = np.concat([dx.reshape(-1, 1), dy.reshape(-1, 1)], axis=1)
+    fname = TRAJ / "complex_periodic.csv"
+    save_data(fname,time=t, position=poses, velocity=vels)
+
 
 
 ## MAIN ###################################################################
@@ -365,6 +384,7 @@ def main():
     elif args.trajectory_id == '9': create_traj_009()
     elif args.trajectory_id == '10': create_traj_010()
     elif args.trajectory_id == '11': create_traj_011()
+    elif args.trajectory_id == '12': create_traj_012()
 
     # complain if user requests an unimplemented trajectory
     else: raise ValueError(f"Trajectory {args.trajectory_id} not found\n")

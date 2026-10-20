@@ -1,5 +1,5 @@
 #pragma once
-// Direct ports of the small helper classes in garrido_brain_v01.py:
+// Direct ports of the small helper classes in garrido_brain_v02.py:
 // CFsubcomplex, CFsubcomplexALT, MFsubcomplex, PFSpikeHistory, ltd_kernel.
 
 #include <vector>
@@ -8,7 +8,14 @@
 #include <limits>
 #include <algorithm>
 #include <random>
-#include <set>
+#include <deque>
+#include <optional>
+
+// Python's round(): ties to even (std::nearbyint under the default rounding mode)
+inline int64_t py_round(double x) { return static_cast<int64_t>(std::nearbyint(x)); }
+
+// spacing of spikes inside a CF burst (was 1 tick @ 2 ms)
+inline constexpr double CF_BURST_ISI_S = 0.002;
 
 // ---------------------------------------------------------------------
 // CFsubcomplex (from C_interface_for_robot_control.cpp).
@@ -92,12 +99,14 @@ public:
     static constexpr double MIN_SPIKE_FREQ = 1.0;
     static constexpr double MAX_SPIKE_FREQ = 10.0;
     static constexpr double MIN_ERROR = 0.001;
-    static constexpr double MAX_ERROR = 0.01;
+    static constexpr double MAX_ERROR = 0.1;
 
-    explicit CFsubcomplexALT(int n_neurons = 50)
+    explicit CFsubcomplexALT(int n_neurons = 50, std::optional<uint64_t> seed = std::nullopt)
         : n_neurons(n_neurons),
           spikes_pending(n_neurons, 0),
-          rng(std::random_device{}()),
+          wait(n_neurons, 0),
+          spiked(n_neurons, 0),
+          rng(seed ? *seed : std::random_device{}()),
           unif(0.0, 1.0) {
         centers.resize(n_neurons);
         widths.resize(n_neurons);
@@ -111,22 +120,29 @@ public:
         std::fill(widths.begin(), widths.end(), w);
     }
 
-    std::vector<uint8_t> step(double dt, double inp_I) {
-        std::vector<uint8_t> spiked(n_neurons, 0);
-        for (int i = 0; i < n_neurons; ++i) spiked[i] = spikes_pending[i] > 0;
-        for (int i = 0; i < n_neurons; ++i)
-            if (spiked[i]) spikes_pending[i] -= 1;
+    const std::vector<uint8_t>& step(double dt, double inp_I) {
+        // spikes inside a burst are CF_BURST_ISI_S apart (1 tick at the legacy 2 ms)
+        const int64_t isi_ticks = std::max<int64_t>(1, py_round(CF_BURST_ISI_S / dt));
+        for (int i = 0; i < n_neurons; ++i) {
+            const bool pending = spikes_pending[i] > 0;
+            if (pending) wait[i] -= 1;
+            spiked[i] = pending && wait[i] <= 0;
+            if (spiked[i]) {
+                spikes_pending[i] -= 1;
+                wait[i] = isi_ticks;
+            }
+        }
 
         for (int idx = 0; idx < n_neurons; ++idx) {
             if (spikes_pending[idx] != 0) continue;  // only idle neurons are eligible
             const double norm_rof = (std::tanh((inp_I - centers[idx]) / widths[idx]) + 1.0) * 0.5;
             const double sp_rof = MIN_SPIKE_FREQ + norm_rof * (MAX_SPIKE_FREQ - MIN_SPIKE_FREQ);
-            const double draw = unif(rng);
+            const double draw = draw_override ? *draw_override : unif(rng);
             if (sp_rof * dt >= draw) {
-                const double val = inp_I / centers[idx];
-                int64_t ival = static_cast<int64_t>(val);  // truncation toward zero, matches numpy's int64 cast
-                ival = std::clamp<int64_t>(ival, 1, 6);
-                spikes_pending[idx] = ival;
+                // numpy's float -> int64 cast truncates toward zero
+                const double val = std::clamp(inp_I / centers[idx], -1.0, 7.0);
+                spikes_pending[idx] = std::clamp<int64_t>(static_cast<int64_t>(val), 1, 6);
+                wait[idx] = 1;     // first spike of the burst on the next tick, as before
             }
         }
 
@@ -137,6 +153,10 @@ public:
     std::vector<double> centers;
     std::vector<double> widths;
     std::vector<int64_t> spikes_pending;
+    std::vector<int64_t> wait;   // ticks until the next burst spike
+    std::vector<uint8_t> spiked;
+    // testing only: when set, every random draw returns this value instead
+    std::optional<double> draw_override;
 
 private:
     std::mt19937_64 rng;
@@ -189,40 +209,35 @@ public:
 };
 
 // ---------------------------------------------------------------------
-// PFSpikeHistory: bounded, prunable record of recent PF (GC) spikes.
+// PFSpikeHistory: bounded, prunable record of recent PF (GC) spikes, one
+// batch per tick that had at least one PF spike. Times are integer ticks,
+// recorded in non-decreasing order, so pruning pops from the front.
 // ---------------------------------------------------------------------
 class PFSpikeHistory {
 public:
-    static constexpr double HISTORY_PRUNE_WINDOW = 200.0;  // timesteps
+    // timesteps (legacy default; the brain passes round(PF_HISTORY_S/dt))
+    static constexpr int64_t HISTORY_PRUNE_WINDOW = 200;
 
-    explicit PFSpikeHistory(double prune_window = HISTORY_PRUNE_WINDOW)
+    explicit PFSpikeHistory(int64_t prune_window = HISTORY_PRUNE_WINDOW)
         : prune_window(prune_window) {}
 
-    void record(const std::vector<int64_t>& indices, double t) {
+    void record(const std::vector<int64_t>& indices, int64_t t) {
         if (!indices.empty()) {
             idx_batches.push_back(indices);
             times.push_back(t);
         }
     }
 
-    void prune(double current_t) {
-        const double cutoff = current_t - prune_window;
-        std::vector<std::vector<int64_t>> new_idx;
-        std::vector<double> new_times;
-        new_idx.reserve(idx_batches.size());
-        new_times.reserve(times.size());
-        for (std::size_t i = 0; i < times.size(); ++i) {
-            if (times[i] >= cutoff) {
-                new_idx.push_back(std::move(idx_batches[i]));
-                new_times.push_back(times[i]);
-            }
+    void prune(int64_t current_t) {
+        const int64_t cutoff = current_t - prune_window;
+        while (!times.empty() && times.front() < cutoff) {
+            times.pop_front();
+            idx_batches.pop_front();
         }
-        idx_batches = std::move(new_idx);
-        times = std::move(new_times);
     }
 
     // Return (all_indices, all_spike_times) as parallel 1D arrays.
-    void flatten(std::vector<int64_t>& out_idx, std::vector<double>& out_times) const {
+    void flatten(std::vector<int64_t>& out_idx, std::vector<int64_t>& out_times) const {
         out_idx.clear();
         out_times.clear();
         for (std::size_t b = 0; b < idx_batches.size(); ++b) {
@@ -235,9 +250,9 @@ public:
 
     std::size_t size() const { return idx_batches.size(); }
 
-    double prune_window;
-    std::vector<std::vector<int64_t>> idx_batches;
-    std::vector<double> times;
+    int64_t prune_window;
+    std::deque<std::vector<int64_t>> idx_batches;
+    std::deque<int64_t> times;
 };
 
 // ---------------------------------------------------------------------

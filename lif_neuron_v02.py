@@ -129,8 +129,10 @@ class LIFPopulation:
     # refractory countdown is considered finished below this (s)
     _REF_EPS = 1e-12
 
-    def __init__(self, n: int, params: NeuronParams = None):
+    def __init__(self, n: int, params: NeuronParams = None, legacy_refractory: bool = False):
         self.n = n
+        # True reproduces v01's refractory rule (see step); only meaningful at the dt it was tuned at
+        self.legacy_refractory = legacy_refractory
         self.p = params if params is not None else NeuronParams()
         p = self.p
         self.V = np.full(n, p.EL, dtype=np.float64)
@@ -164,8 +166,14 @@ class LIFPopulation:
         # Refractory: a neuron integrates only for the part of this tick that is left after its
         # refractory time.  (v01 decremented first and then tested, which blocked only
         # ceil(T_ref/dt)-1 whole ticks -- i.e. NO refractory at all whenever T_ref <= dt.)
-        t_act = np.clip(dt - self.refractory_time_left, 0.0, dt)
-        self.refractory_time_left = np.maximum(0.0, self.refractory_time_left - dt)
+        if self.legacy_refractory:
+            # v01 rule: whole ticks only, blocked while the countdown is still > 0 after decrementing
+            self.refractory_time_left = np.maximum(0.0, self.refractory_time_left - dt)
+            self.refractory_time_left[self.refractory_time_left <= self._REF_EPS] = 0.0
+            t_act = np.where(self.refractory_time_left > 0.0, 0.0, dt)
+        else:
+            t_act = np.clip(dt - self.refractory_time_left, 0.0, dt)
+            self.refractory_time_left = np.maximum(0.0, self.refractory_time_left - dt)
         active = t_act > self._REF_EPS
 
         # spikes arriving at the start of this tick (refractory neurons still receive them)

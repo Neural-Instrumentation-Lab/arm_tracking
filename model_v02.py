@@ -23,9 +23,8 @@ from matplotlib.gridspec import GridSpec
 from pathlib import Path
 from collections import deque
 from arm_assets_v02 import armTraj, JoystickDotSimulator
-from garrido_brain_v01 import cerebellum
-# from garrido_brain_small_dt import cerebellum
-# import garrido_brain as gb
+# from garrido_brain_v02 import cerebellum
+from garrido_brain import cerebellum   # C++ port of v02, build with build.sh
 from experiment_assets import load_trajectory, save_weights, brainData
 from simulate import runSimulation
 from plot_results import plot_arm_results, plot_brain_results
@@ -94,18 +93,21 @@ def fillTrajectory(traj, arm):
     return traj
 
 ###################################
-def simulate(exp, save, showOutput, makeMovie):
+def simulate(exp, save, showOutput, makeMovie, reset=True):
 ###################################
     """
     Args:
         exp: Experiment object, see experiment_assets.py
         save: whether to save the results or not
         showOutput: whether to show output or not
+        reset: whether the arm is reset to a random start point every trial
     """
     trajFile   = exp.trajectory
     n_dof      = exp.nDof
     joystick   = JoystickDotSimulator()
-    brain      = cerebellum([-2, -1], [2, 1], n_dof=2)
+    # garrido_brain_small_dt.cerebellum also needs dt=exp.brain_timestep here
+    # brain      = cerebellum(list(exp.qMins), list(exp.qMaxs), n_dof=n_dof)
+    brain      = cerebellum(list(exp.qMins), list(exp.qMaxs), n_dof=n_dof, dt=exp.brain_timestep)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
@@ -118,7 +120,7 @@ def simulate(exp, save, showOutput, makeMovie):
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, nTrials=exp.nTrials)
+    final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, nTrials=exp.nTrials, brain_dt=exp.brain_timestep, reset=reset)
     # the simulation has a random start point, so we unroll by offset
     # saving trajectories
     aligned_desired_pos = np.roll(desired_traj.pos, -offset, axis=0) 
