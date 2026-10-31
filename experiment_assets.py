@@ -275,7 +275,8 @@ def save_weights(
     """
     fname = Path(fname)
     fname.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(fname, pf_pc=np.asarray(pf_pc), mf_dcn=np.asarray(mf_dcn), pc_dcn=np.asarray(pc_dcn))
+    # lossless; pf_pc compresses well since rows of unvisited GCs never change
+    np.savez_compressed(fname, pf_pc=np.asarray(pf_pc), mf_dcn=np.asarray(mf_dcn), pc_dcn=np.asarray(pc_dcn))
  
     if meta:
         meta_path = fname.with_suffix(".yaml")

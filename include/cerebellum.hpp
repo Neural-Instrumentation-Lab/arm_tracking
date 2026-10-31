@@ -107,12 +107,13 @@ public:
 
     static constexpr double W_MF_GC = 0.18e-9;
     static constexpr double W_PC_DCN = 1e-9;
-    static constexpr double W_MF_DCN = 0.1e-9;
+    static constexpr double W_MF_DCN = 2.4e-9;
     static constexpr double W_CF_DCN_AMPA = 0.5e-9;
     static constexpr double W_CF_DCN_NMDA = 0.25e-9;
 
     // TORQUE_ALPHA is a per-instance list in Python; here it's a fixed
     // 6-element array (n_dof is required to be 6 -- see constructor).
+    // J2 and J4 are 3x the paper's alpha_j: the real Baxter compensated gravity itself, this sim doesn't
     static constexpr std::array<double, 6> TORQUE_ALPHA = {0.75, 3.0, 0.375, 1.5, 0.05, 0.05};
 
     static constexpr std::size_t nGC = 10000;   // nMF_per_subgroup ** nMF_subgroups
@@ -140,6 +141,7 @@ public:
     std::size_t n_pc_total;
     std::vector<double> pf_pc_wts;  // flat, row-major: [nGC*nJoints x n_pc_total]
     std::vector<uint8_t> pc_out;
+    std::vector<uint8_t> dcnOut;  // last DCN output (kept for the raster plot)
 
     LIFPopulation pcNeurons;
     LIFPopulation dcnNeurons;
@@ -237,8 +239,9 @@ public:
             const double sigError = kp[j] * qErr[j] + kd[j] * qdErr[j];
             const double pError = sigError;
             const double nError = -sigError;
-            agonist[j] = (sigError < 0.0) ? nError : 0.0;
-            antagonist[j] = (sigError >= 0.0) ? pError : 0.0;
+            // positive error -> agonist microzone (DCN half that pushes +)
+            agonist[j] = (sigError >= 0.0) ? pError : 0.0;
+            antagonist[j] = (sigError < 0.0) ? nError : 0.0;
         }
 
         for (std::size_t j = 0; j < nJoints; ++j) {
@@ -389,7 +392,7 @@ public:
         for (std::size_t i = 0; i < n_dcn_total; ++i)
             gaba_in[i] = (pc_out[i] ? 1.0 : 0.0) * W_PC_DCN;
 
-        auto dcnOut = dcnNeurons.step(dt, ampa_in, nmda_in, gaba_in);
+        dcnOut = dcnNeurons.step(dt, ampa_in, nmda_in, gaba_in);
         // (Python checks `if dcnOut[150:199].any(): pass` here -- a no-op
         // left over from debugging. Omitted as genuinely dead code.)
         auto corr = dcnToTorque(dcnOut, dt);

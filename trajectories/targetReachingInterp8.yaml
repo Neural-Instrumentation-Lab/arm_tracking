@@ -1,0 +1,49 @@
+mf_position_min:
+- -0.97
+- -0.48
+- -0.005
+- 0.58
+- -0.066
+- 0.24
+mf_position_max:
+- -0.55
+- -0.03
+- 0.04
+- 1.8
+- 0.02
+- 1.02
+mf_velocity_min:
+- -0.2701
+- -0.3901
+- -0.04301
+- -0.9501
+- -0.07901
+- -0.55601
+mf_velocity_max:
+- 0.27
+- 0.39
+- 0.043
+- 0.95
+- 0.079
+- 0.556
+supervisor_position_min:
+- -1.07
+- -0.58
+- -0.105
+- 0.48
+- -0.166
+- 0.14
+supervisor_position_max:
+- -0.45
+- 0.07
+- 0.14
+- 1.9
+- 0.12
+- 1.12
+source: EDLUT_BAXTER config_files/trajectory_data_targetReaching/positions_target_reaching_1_0s_0_0s.txt,
+  config_files/trajectory_data_targetReaching/velocity_target_reaching_1_0s_0_0s.txt;
+  ranges from launch/target_reaching.launch
+notes: joint data copied as-is (500 Hz). pos_x/y/z = forward kinematics of the joint
+  data (w2 locked at 0), mapped into the EDLUT/ROS frame with the inverse of baxter_reduced.applyTransform.
+  8 reaching tasks of 2 s (1 s out, 1 s back to the centre) in file order; the paper
+  picks them in random order.

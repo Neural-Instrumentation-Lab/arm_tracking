@@ -177,15 +177,20 @@ public:
 
             if (!active) continue;
 
-            // 4) Integrate membrane potential (Eqs. 4-6), only for
-            //    non-refractory neurons
+            // 4) Integrate membrane potential (Eqs. 4-6), only for non-refractory neurons.
+            //    Each conductance decays exponentially within the tick (Eqs. 7-9), so its
+            //    tick mean is used -- every spike then delivers exactly w*tau, as in EDLUT.
+            //    With those means held for the tick, V relaxes exponentially toward V_inf.
+            //    (Forward Euler with the full post-spike conductance was unstable here and
+            //    over-drove every synapse: PC inhibition acted as excitation.)
             const double Vi = V[i];
-            const double I_internal = -p.gL * (Vi - p.EL);
-            const double g_nmda_inf = _nmda_inf_scalar(Vi);
-            const double I_external = -(g_AMPA[i] + g_NMDA[i] * g_nmda_inf) * (Vi - p.E_AMPA)
-                                       - g_GABA[i] * (Vi - p.E_GABA);
-            const double dV = (I_internal + I_external) / p.Cm * dt;
-            const double V_new = Vi + dV;
+            const double gA = g_AMPA[i] * p.tau_AMPA / dt * (1.0 - decay_ampa);
+            const double gN = g_NMDA[i] * p.tau_NMDA / dt * (1.0 - decay_nmda);
+            const double gG = g_GABA[i] * p.tau_GABA / dt * (1.0 - decay_gaba);
+            const double g_exc = gA + gN * _nmda_inf_scalar(Vi);
+            const double G = p.gL + g_exc + gG;
+            const double V_inf = (p.gL * p.EL + g_exc * p.E_AMPA + gG * p.E_GABA) / G;
+            const double V_new = V_inf + (Vi - V_inf) * std::exp(-dt * G / p.Cm);
 
             // 5) Threshold check -> spike, reset, refractory period
             if (V_new >= p.V_thr) {

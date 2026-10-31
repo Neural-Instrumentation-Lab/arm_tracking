@@ -1,34 +1,53 @@
-# trying to get more points out of the trajectories provided before reverse engineering them
+'''
+Resamples a trajectory onto a finer time grid by linear interpolation, so the arm's
+physics can be integrated with a smaller timestep (the sim steps once per trajectory sample).
+
+usage: python interpolate_traj.py --factor 8
+       python interpolate_traj.py --input trajectories/circleTrajPos.csv --factor 8 --output trajectories/circleTrajInterp8.csv
+'''
+import argparse
+from pathlib import Path
 import numpy as np
 from experiment_assets import load_trajectory
 from create_trajectories import save_data
 
-traj = load_trajectory("trajectories/circleTrajPos.csv")
 
-int_pos = np.zeros((len(traj.position)*2, 3))
-int_jpos = np.zeros((len(traj.joint_position)*2, 7))
-int_jvel = np.zeros((len(traj.joint_velocity)*2, 7))
-int_t    = np.zeros(len(traj.time)*2)
+def interpolate(traj, factor):
+    '''
+    Args:
+        traj: Trajectory with a uniform time grid
+        factor: how many samples per original sample interval (2 halves the timestep)
+    Returns:
+        time, {field: resampled array} for every field the trajectory has
+    '''
+    t = traj.time
+    fine_t = np.linspace(t[0], t[-1], (len(t) - 1) * factor + 1)
+    fields = {}
+    for name in ("position", "velocity", "acceleration", "joint_position", "joint_velocity", "joint_acceleration"):
+        data = getattr(traj, name)
+        if data is not None:
+            fields[name] = np.column_stack([np.interp(fine_t, t, col) for col in data.T])
+    return fine_t, fields
 
-int_pos[0::2] = traj.position
-int_jpos[0::2] = traj.joint_position
-int_jvel[0::2] = traj.joint_velocity
-int_t[0::2] = traj.time
 
-shift = np.copy(traj.position)
-shift[:-1] = traj.position[1:]
-int_pos[1::2] = (traj.position + shift) / 2
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', default='trajectories/circleTrajPos.csv', help='trajectory csv to resample')
+    parser.add_argument('--factor', type=int, default=2, help='samples per original sample interval (timestep / factor)')
+    parser.add_argument('--output', default=None, help='output csv (default: <input>Interp<factor>.csv)')
+    args = parser.parse_args()
+    if args.factor < 1:
+        parser.error('--factor must be at least 1')
 
-shift = np.copy(traj.joint_position)
-shift[:-1] = traj.joint_position[1:]
-int_jpos[1::2] = (traj.joint_position + shift) / 2
+    src = Path(args.input)
+    out = Path(args.output) if args.output else src.with_name(f"{src.stem.replace('Pos', '')}Interp{args.factor}.csv")
+    traj = load_trajectory(src)
+    time, fields = interpolate(traj, args.factor)
+    # keep the sidecar (encoding / supervisor ranges etc.) with the resampled trajectory
+    save_data(fname=out, time=time, meta=traj.meta or None, **fields)
+    print(f"{src} ({len(traj.time)} samples, dt {np.diff(traj.time).mean()*1e3:.3f} ms) -> "
+          f"{out} ({len(time)} samples, dt {np.diff(time).mean()*1e3:.3f} ms)")
 
-shift = np.copy(traj.joint_velocity)
-shift[:-1] = traj.joint_velocity[1:]
-int_jvel[1::2] = (traj.joint_velocity + shift) / 2
 
-shift = np.copy(traj.time)
-shift[:-1] = traj.time[1:]
-int_t[1::2] = (traj.time + shift) / 2
-
-save_data(fname="trajectories/circleTrajInterp.csv", time=int_t, position=int_pos, joint_position=int_jpos, joint_velocity=int_jvel)
+if __name__ == "__main__":
+    main()

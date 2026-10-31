@@ -128,6 +128,7 @@ PYBIND11_MODULE(garrido_brain, m) {
         .def_readonly("pfs", &cerebellum::pfs)
         .def_readonly("cf_output", &cerebellum::cf_output)
         .def_readonly("pc_out", &cerebellum::pc_out)
+        .def_readonly("dcnOut", &cerebellum::dcnOut)
         .def_property_readonly("pf_pc_wts", [](const cerebellum& c) {
             // Expose the (large) flat weight matrix as a 2D numpy array view.
             const std::size_t rows = c.pf_pc_wts.size() / c.n_pc_total;

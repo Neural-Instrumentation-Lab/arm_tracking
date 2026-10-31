@@ -409,14 +409,16 @@ class baxter_reduced(dynamic_3dof_arm):
         # initializes from urdf file
         # https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/devel/doxygen-html/md_doc_b-examples_e-reduced-model.html
         self.model, self.collModel, self.visualModel = pin.buildModelsFromUrdf(filename, pkgDirs)
-        joints_to_lock = ['head_pan', 'right_s0', 'right_s1', 'right_e0', 'right_e1', 'right_w0', 'right_w1', 'right_w2']
+        # left_w2 is locked too: the brain only controls 6 DoF (as in the paper), so w2 stays fixed at 0
+        joints_to_lock = ['head_pan', 'right_s0', 'right_s1', 'right_e0', 'right_e1', 'right_w0', 'right_w1', 'right_w2',
+                          'left_w2']
         jointsToLockIDs = []
         for jn in joints_to_lock:
             if self.model.existJointName(jn):
                 jointsToLockIDs.append(self.model.getJointId(jn))
         self.model, self.visualModel = pin.buildReducedModel(self.model, self.visualModel, jointsToLockIDs, pin.neutral(self.model))
         self.data = self.model.createData()
-        self.njoints = 7 
+        self.njoints = 6 
         self.eeDes = np.array([0, 0, 0]) 
         self.eeId = self.model.getFrameId("left_gripper")
 
@@ -427,11 +429,11 @@ class baxter_reduced(dynamic_3dof_arm):
                            [ 9.62403736e-04, -1.67796321e-03,  9.99998129e-01]]) 
         self.t = np.array([1.3833375,0.57457608,-0.02481647])
 
-        self.qSuppMin = np.array([-0.97, -0.48, -0.005, 0.58, -0.066, 0.24, 0])
-        self.qSuppMax = np.array([-0.55, -0.03, 0.04, 1.80, 0.02, 1.02, 0])
+        self.qSuppMin = np.array([-0.97, -0.48, -0.005, 0.58, -0.066, 0.24])
+        self.qSuppMax = np.array([-0.55, -0.03, 0.04, 1.80, 0.02, 1.02])
 
-        self.qdSuppMin = np.array([-0.79, -0.75, -0.055, -1.8, -0.225, -1.1, 0])
-        self.qdSuppMax = np.array([0.53, 0.75, 0.08, 1.81, 0.097, 1.1, 0])
+        self.qdSuppMin = np.array([-0.79, -0.75, -0.055, -1.8, -0.225, -1.1])
+        self.qdSuppMax = np.array([0.53, 0.75, 0.08, 1.81, 0.097, 1.1])
 
         if disp:
             # print neutral config

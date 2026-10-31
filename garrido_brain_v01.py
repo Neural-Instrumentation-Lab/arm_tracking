@@ -196,9 +196,10 @@ class cerebellum:
         self.nMF              = self.nMF_per_subgroup * self.nMF_subgroups
         self.W_MF_GC   = 0.18e-9
         self.W_PC_DCN  = 1e-9
-        self.W_MF_DCN   = 0.1e-9 
+        self.W_MF_DCN   = 2.4e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
+        # J2 and J4 are 3x the paper's alpha_j: the real Baxter compensated gravity itself, this sim doesn't
         self.TORQUE_ALPHA  = [0.75, 3.0, 0.375, 1.5, 0.05, 0.05]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
@@ -234,6 +235,7 @@ class cerebellum:
 
         self.pf_pc_wts = np.full((self.nGC * n_dof, self.nPC * n_dof), cerebellum.INIT_PF_PC_WT)
         self.pc_out = np.zeros(self.nPC * n_dof, dtype=bool)
+        self.dcnOut = np.zeros(self.nDCN * n_dof, dtype=bool)   # last DCN output (kept for the raster plot)
 
         self.pcNeurons     = LIFPopulation(n=self.nPC * n_dof, params=PC_params)
         self.dcnNeurons    = LIFPopulation(n=self.nDCN * n_dof, params=DCN_params)
@@ -330,8 +332,9 @@ class cerebellum:
         # nError = self.errorCalc(-sigError)
         pError = sigError
         nError = -sigError
-        agonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
-        antagonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
+        # positive error -> agonist microzone (DCN half that pushes +)
+        agonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
+        antagonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
         for j in range(self.nJoints):
             epsAgon  = agonist[j]
             epsAAgon = antagonist[j]
@@ -417,7 +420,7 @@ class cerebellum:
         self.climbingFibers(qErr, qdErr, dt)
         # now we have spikes from the PFs and the CFs in cf_output and pfs
         self.PCstep(dt)
-        dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
+        self.dcnOut = dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
                              nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
                              gaba_input=(self.pc_out*self.W_PC_DCN))
         corr = self.dcnToTorque(dcnOut, dt)

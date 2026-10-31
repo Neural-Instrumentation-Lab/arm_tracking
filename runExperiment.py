@@ -101,6 +101,12 @@ def main() -> None:
             plt.axis('off')
             plt.imshow(brainPlot)
             plt.show()
+            # results saved before the raster existed don't have one
+            rasterFile = exp.graphs.with_name(exp.graphs.stem + "_dcn_raster" + exp.graphs.suffix)
+            if rasterFile.exists():
+                plt.axis('off')
+                plt.imshow(plt.imread(rasterFile))
+                plt.show()
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")

@@ -145,8 +145,14 @@ def plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, 
     plt.close(fig)
 
 def plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=True, save=False, saveLoc=None):
-    plt.imshow(wts, cmap='viridis', interpolation='nearest', aspect="auto")
-    plt.colorbar()
+    # only the granule cells the trajectory visited have learned anything; drawing all 60k x 600
+    # weights took ~3 GB in matplotlib, so plot just the rows that moved off their initial value
+    init = np.median(wts)
+    changed = np.flatnonzero((wts != init).any(axis=1))
+    plt.imshow(wts[changed] if changed.size else wts[:1], cmap='viridis', interpolation='nearest', aspect="auto")
+    plt.colorbar(label='Conductance (S)')
+    plt.xlabel("PCs")
+    plt.ylabel(f"GCs whose weights changed ({changed.size} of {wts.shape[0]})")
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_pf_pc_wts" + saveLoc.suffix), dpi=300)
@@ -164,6 +170,45 @@ def plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=True, s
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_brain" + saveLoc.suffix), dpi=300)
+    if show:
+        plt.show()
+    plt.close(fig)
+
+def plot_dcn_raster(dcnSnapshots, nTrials, show=True, save=False, saveLoc=None):
+    """
+    Raster of every DCN's spikes over one whole trial, at the first, middle and final trial.
+
+    dcnSnapshots: {trial: (times, spikes)} from runSimulation, spikes shape (brain ticks, nDCN total)
+    """
+    trials = sorted(dcnSnapshots)
+    fig, axs = plt.subplots(len(trials), 1, sharex=True, sharey=True, squeeze=False,
+                            figsize=(9, 3.4 * len(trials)), layout="constrained")
+    for ax, trial in zip(axs[:, 0], trials):
+        times, spikes = dcnSnapshots[trial]
+        n_ticks, n_dcn = spikes.shape
+        n_groups = 2 * (n_dcn // 100)            # agonist + antagonist per joint, 50 DCNs each
+        per_group = n_dcn // n_groups
+        t_idx, neuron = np.nonzero(spikes)
+        ax.scatter(times[t_idx], neuron, s=1.5, marker="|", linewidths=0.5, color="0.15", rasterized=True)
+        for g in range(1, n_groups):
+            ax.axhline(g * per_group - 0.5, color="0.75", linewidth=0.6)
+        rate = spikes.sum() / (n_dcn * n_ticks * TIMESTEP)
+        ax.set_title(f"Trial {trial + 1} of {nTrials}   (mean rate {rate:.1f} Hz)", loc="left", fontsize=10)
+        ax.set_ylabel("DCN")
+        ax.set_ylim(-0.5, n_dcn - 0.5)
+        ax.set_yticks([(g + 0.5) * per_group for g in range(n_groups)])
+        ax.set_yticklabels([f"J{g // 2 + 1} {'agonist' if g % 2 == 0 else 'antagonist'}" for g in range(n_groups)],
+                           fontsize=7)
+        ax.tick_params(axis="y", length=0)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+    times = dcnSnapshots[trials[-1]][0]
+    axs[-1, 0].set_xlabel("Time in trial (s)")
+    axs[-1, 0].set_xlim(0, times[-1])
+    fig.suptitle("DCN spike raster")
+    if save:
+        saveLoc.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_dcn_raster" + saveLoc.suffix), dpi=300)
     if show:
         plt.show()
     plt.close(fig)
@@ -224,8 +269,9 @@ def supervisor_torque(currPos, currVel, qMin, qMax, smoothing):
     """Mimics mechanical brakes: zero everywhere except near joint limits,
     where it pushes back proportionally to how far past the safe margin
     the joint has gone."""
-    kp = np.array([5, 5, 5, 5, 1, 1, 1])
-    kd = np.array([20, 20, 20, 20, 3, 3, 3])
+    # gains from EDLUT_BAXTER's pd_supervisor (launch files)
+    kp = np.array([20, 20, 20, 20, 3, 3])
+    kd = np.array([5, 5, 5, 5, 1, 1])
     correction = np.zeros_like(currPos)
     near_upper = currPos > qMax
     near_lower = currPos < qMin
@@ -253,6 +299,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         PCact: evolution of Purkinje Cells over nTrials
         mf_dcn: evolution of mf-dcn weights over nTrials
         pc_dcn: evolution of pc-dcn weights over nTrials
+        dcnSnapshots: {trial: (times, DCN spikes per brain tick)} for the first, middle and final trial
 
     '''
     # initialize the trajectory
@@ -275,7 +322,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     # for a while, but It's convergence is MUCH smoother with the kd.
     # otherwise because of the non-reseting of the arm, the MAE oscillates.
     kp = np.ones(arm.njoints)*0
-    kd = [5, 5, 5, 5, 1, 1, 1]
+    kd = [0, 0, 0, 0, 0, 0]
     qMin = arm.model.lowerPositionLimit
     qMax = arm.model.upperPositionLimit
     qdMax = arm.model.velocityLimit
@@ -290,11 +337,17 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     prevPos = deque()
     prevComm = deque()
     smoothing = np.zeros_like(corrTorque)
+    torrSup = np.zeros_like(corrTorque)
+    # DCN spikes of a few trials, for the raster plot (every trial would be nTrials x ticks x nDCN)
+    dcnSnapshots = {t: ([], []) for t in sorted({0, nTrials // 2, nTrials - 1})}
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
-            qError  = angle_diff(traj_w_error.pos[i], currPos)
-            qdError = traj_w_error.vel[i] - currVel
+            # teaching signal compares the arm with the desired state from 50 ms earlier (efferent delay),
+            # as EDLUT_BAXTER's error node does; the trajectory is periodic, so wrap around at the start
+            iLag    = (i - delEff) % len(time)
+            qError  = angle_diff(traj_w_error.pos[iLag], currPos)
+            qdError = traj_w_error.vel[iLag] - currVel
             prevErrors.append((qError.copy(), qdError.copy()))
             prevPos.append((currPos.copy(), currVel.copy(), traj_w_error.pos[i].copy(), traj_w_error.vel[i].copy()))
             if trial != 0 or i >= delEff:
@@ -305,11 +358,16 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             if i % step ==0:
                 corr = brain.compute(qSig[0][:6], qSig[1][:6], qSig[2][:6], 
                                     qSig[3][:6], (errSig[0])[:6], (errSig[1])[:6]) 
-                prevComm.append(np.concat((corr, [0])))
+                prevComm.append(np.asarray(corr))
+                if trial in dcnSnapshots:
+                    dcnSnapshots[trial][0].append(time[i])
+                    dcnSnapshots[trial][1].append(np.asarray(brain.dcnOut, dtype=bool))
                 if trial != 0 or i >= delAff:
                     corrTorque = prevComm.popleft()
             torrPd = kp*(qError) + kd*(qdError)
-            torrSup, smoothing = supervisor_torque(currPos, currVel, arm.qSuppMin, arm.qSuppMax, smoothing)
+            # the supervisor runs at 500 Hz like EDLUT_BAXTER's (its damping ramps +0.02 per update) and is held between updates
+            if i % step == 0:
+                torrSup, smoothing = supervisor_torque(currPos, currVel, arm.qSuppMin, arm.qSuppMax, smoothing)
             finalTorque = corrTorque + torrPd + torrSup
             np.clip(finalTorque, -tauMax, tauMax, out=finalTorque)
             # move the arm
@@ -330,7 +388,9 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             if trial == nTrials-1:
                 final_traj.acel[i,:]  = currAcc
         errorTot[trial]  = np.sum([np.linalg.norm(des[:6] - act[:6]) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
-    return final_traj, errorTot
+        print(f"trial {trial} done")
+    dcnSnapshots = {t: (np.array(ts), np.array(sp)) for t, (ts, sp) in dcnSnapshots.items()}
+    return final_traj, errorTot, dcnSnapshots
 
 def transform(traj, arm):
     '''
@@ -423,9 +483,6 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
     arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs, disp=showOutput)
-    # brain           = gc.Cerebellum(arm.njoints) 
-    # -1 joint because joint w2 is uncontrolled by the brain
-    brain           = gb.cerebellum(arm.qSuppMin[:6], arm.qdSuppMin[:6], arm.qSuppMax[:6], arm.qdSuppMax[:6], n_dof=arm.njoints - 1)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
@@ -434,7 +491,22 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     traj_data           = load_trajectory(trajFile)   
     traj_data           = transform(traj_data, arm)
     traj_data           = fillTrajectory(traj_data, arm)
+    # trajectory files carry all 7 left-arm joints; w2 is locked in the arm model, so drop it
+    for attr in ("joint_position", "joint_velocity", "joint_acceleration"):
+        setattr(traj_data, attr, getattr(traj_data, attr)[:, :arm.njoints])
     time                = traj_data.time
+
+    # MF encoding and supervisor ranges are per trajectory (EDLUT_BAXTER launch files); the trajectory's
+    # .yaml sidecar can set them, otherwise the arm's defaults (tuned for the circle) are used
+    ranges = traj_data.meta
+    arm.qSuppMin = np.array(ranges.get("supervisor_position_min", arm.qSuppMin))
+    arm.qSuppMax = np.array(ranges.get("supervisor_position_max", arm.qSuppMax))
+    mfQMin  = np.array(ranges.get("mf_position_min", arm.qSuppMin))
+    mfQMax  = np.array(ranges.get("mf_position_max", arm.qSuppMax))
+    mfQdMin = np.array(ranges.get("mf_velocity_min", arm.qdSuppMin))
+    mfQdMax = np.array(ranges.get("mf_velocity_max", arm.qdSuppMax))
+    brain           = gb.cerebellum(mfQMin, mfQdMin, mfQMax, mfQdMax, n_dof=arm.njoints)
+
     desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
     traj_w_error        = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
     traj_no_error       = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
@@ -450,7 +522,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+    final_traj, errorTot, dcnSnapshots = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
 
     # no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
@@ -467,6 +539,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     wts = brain.pf_pc_wts
     plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
+    plot_dcn_raster(dcnSnapshots, exp.nTrials, show=showOutput, saveLoc=exp.graphs, save=save)
 
     if not showOutput:
         print("Simulation Complete...")

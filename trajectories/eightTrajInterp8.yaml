@@ -1,0 +1,47 @@
+mf_position_min:
+- -0.96
+- -0.43
+- -0.023
+- 1.0
+- -0.021
+- 0.41
+mf_position_max:
+- -0.53
+- -0.23
+- 0.11
+- 1.59
+- 0.039
+- 0.79
+mf_velocity_min:
+- -0.69
+- -0.68
+- -0.06
+- -1.72
+- -0.14
+- -1.16
+mf_velocity_max:
+- 0.72
+- 0.65
+- 0.07
+- 1.79
+- 0.14
+- 1.1
+supervisor_position_min:
+- -0.96
+- -0.43
+- -0.023
+- 1.0
+- -0.021
+- 0.41
+supervisor_position_max:
+- -0.53
+- -0.23
+- 0.11
+- 1.59
+- 0.039
+- 0.79
+source: EDLUT_BAXTER config_files/trajectory_data_eight/eightTrajectory_1000samples_2seconds_r12_position.txt,
+  config_files/trajectory_data_eight/eightTrajectory_1000samples_2seconds_r12_velocity.txt;
+  ranges from launch/eight_trajectory.launch
+notes: joint data copied as-is (500 Hz). pos_x/y/z = forward kinematics of the joint
+  data (w2 locked at 0), mapped into the EDLUT/ROS frame with the inverse of baxter_reduced.applyTransform.

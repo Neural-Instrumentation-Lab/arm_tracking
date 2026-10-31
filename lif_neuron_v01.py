@@ -189,14 +189,19 @@ class LIFPopulation:
  
  
         # 4) Integrate membrane potential (Eqs. 4-6), only for non-refractory neurons
-        I_internal = -p.gL * (self.V - p.EL)
-        g_nmda_inf = self._nmda_inf(self.V)
-        I_external = (
-            -(self.g_AMPA + self.g_NMDA * g_nmda_inf) * (self.V - p.E_AMPA)
-            - self.g_GABA * (self.V - p.E_GABA)
-        )
-        dV = (I_internal + I_external) / p.Cm * dt
-        self.V = np.where(active, self.V + dV, self.V)
+        #    Each conductance decays exponentially within the tick (Eqs. 7-9), so its tick
+        #    mean is used -- every spike then delivers exactly w*tau, as in EDLUT. With those
+        #    means held for the tick, V relaxes exponentially toward V_inf. (Forward Euler with
+        #    the full post-spike conductance was unstable here and over-drove every synapse:
+        #    PC inhibition acted as excitation.)
+        gA = self.g_AMPA * p.tau_AMPA / dt * (1 - np.exp(-dt / p.tau_AMPA))
+        gN = self.g_NMDA * p.tau_NMDA / dt * (1 - np.exp(-dt / p.tau_NMDA))
+        gG = self.g_GABA * p.tau_GABA / dt * (1 - np.exp(-dt / p.tau_GABA))
+        g_exc = gA + gN * self._nmda_inf(self.V)
+        G = p.gL + g_exc + gG
+        V_inf = (p.gL * p.EL + g_exc * p.E_AMPA + gG * p.E_GABA) / G
+        V_new = V_inf + (self.V - V_inf) * np.exp(-dt * G / p.Cm)
+        self.V = np.where(active, V_new, self.V)
  
         # 5) Threshold check -> spike, reset, refractory period (only for
         #    neurons that were free to integrate this step)
