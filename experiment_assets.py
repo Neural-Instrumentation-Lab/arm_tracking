@@ -5,14 +5,12 @@ import re
 import pandas as pd
 import numpy as np
 import yaml
-from typing import Literal
+from bmi import BMI, FullBMI
 
-WeightGroup = Literal["pf_pc", "mf_dcn", "pc_dcn"]
-ALL_WEIGHT_GROUPS: tuple[WeightGroup, ...] = ("pf_pc", "mf_dcn", "pc_dcn")
 
 class brainData:
     def __init__(self, nTrials, trajLen, nDCNs, nGCs, nPCs):
-        self.dcn     = np.zeros((nTrials, trajLen, nDCNs))
+        self.dcn     = np.zeros((nTrials, trajLen, nDCNs), dtype=bool)   # DCN spikes are true/false
         self.pf_pc   = np.zeros((nTrials, nGCs, nPCs)) 
 
 @dataclass(frozen=True)
@@ -29,10 +27,8 @@ class Experiment:
     qMins : tuple[float, ...] # per-joint lower bound of the brain's MF encoding range, length nDof
     qMaxs : tuple[float, ...] # per-joint upper bound of the brain's MF encoding range, length nDof
     brain_timestep : float = 2e-3 # (s) how often the brain is stepped during the sim
-    load_weight_groups: tuple[WeightGroup, ...] = field(default_factory=tuple) # which sites are to be loaded from initialWts file
-    initialWts: Path | None = None        # .npz of initial weights of brain, only sites specified from load_weight_groups loaded
-    defaultWts: Path | None = None        # .npz file with initial weights of the sites not in load_weight_groups. If not given defaults to 0s
-    plastic: tuple[WeightGroup, ...] = ALL_WEIGHT_GROUPS # what sites in the brain are plastic
+    bmi : BMI = field(default_factory=FullBMI) # decodes the brain's DCN spikes into the arm command, see bmi.py
+    initialWts: Path | None = None # brain weights .npz (another experiment's finalWts) whose final PF-PC weights the brain starts from. None = default init
 
     def validate(self, assume_produced: frozenset[Path] = frozenset()) -> list[str]:
         """Return a list of problems (missing files etc). Empty list = OK.
@@ -57,24 +53,11 @@ class Experiment:
         if self.brain_timestep <= 0:
             problems.append(f"brain_timestep must be positive (got {self.brain_timestep})")
  
-        unknown = set(self.load_weight_groups) - set(ALL_WEIGHT_GROUPS)
-        if unknown:
-            problems.append(
-                f"load_weight_groups has unknown group(s) {sorted(unknown)}; "
-                f"valid options are {ALL_WEIGHT_GROUPS}"
-            )
-        if self.load_weight_groups and self.initialWts is None:
-            problems.append("load_weight_groups is set but initialWts is None")
         if self.initialWts is not None:
             already_exists = self.initialWts.exists()
             will_be_produced = self.initialWts in assume_produced
             if not already_exists and not will_be_produced:
                 problems.append(f"initialWts file not found: {self.initialWts}")
-        if self.defaultWts is not None:
-            already_exists = self.defaultWts.exists()
-            will_be_produced = self.defaultWts in assume_produced
-            if not already_exists and not will_be_produced:
-                problems.append(f"defaultWts file not found: {self.defaultWts}")
         return problems
 
 
@@ -91,10 +74,6 @@ def build_dependencies(to_run: list[Experiment], all_experiments: dict[str, Expe
         dep_names = set()
         if exp.initialWts is not None and not exp.initialWts.exists():
             producer = producer_by_results.get(exp.initialWts)
-            if producer is not None and producer != exp.name:
-                dep_names.add(producer)
-        if exp.defaultWts is not None and not exp.defaultWts.exists():
-            producer = producer_by_results.get(exp.defaultWts)
             if producer is not None and producer != exp.name:
                 dep_names.add(producer)
         deps[exp.name] = dep_names
@@ -230,52 +209,27 @@ def load_trajectory(path: Path | str) -> Trajectory:
     )
 
 """
-Saving/loading final brain weights.
- 
-Weights are a single snapshot (not a time series like trajectories), made up
-of a few named groups of possibly different lengths:
-    pf_pc   - parallel fiber -> Purkinje cell weights, length n_pf
-    mf_dcn  - mossy fiber -> DCN weights, length n_muscle
-    pc_dcn  - Purkinje cell -> DCN weights, length n_muscle
- 
-Stored as a numpy .npz archive (each group kept as its own named array, no
-flattening/reassembly needed) plus an optional YAML sidecar for anything
-that isn't inferable from the arrays themselves (e.g. training notes).
+Saving/loading brain results.
+
+Stored as a compressed numpy .npz archive:
+    pf_pc       - parallel fiber -> Purkinje cell weights after every trial, shape (nTrials, n_pf, n_pc)
+    dcn_packed  - DCN spikes of every step, bit-packed (read them with load_dcn)
+plus an optional YAML sidecar for anything that isn't inferable from the
+arrays themselves (e.g. training notes).
+
+An experiment can start from another one's weights by setting its initialWts
+to that experiment's finalWts; load_pf_pc() gives the weights after the last trial.
 """
-@dataclass
-class Weights:
-    pf_pc: np.ndarray    # shape (nTrials, n_pf, n_muscle)
-    mf_dcn: np.ndarray   # shape (nTrials, n_muscle)
-    pc_dcn: np.ndarray   # shape (nTrials, n_muscle,)
-    meta: dict = field(default_factory=dict)
-    source: Path | None = None
- 
-    @property
-    def n_pf(self) -> int:
-        return self.pf_pc.shape[0]
- 
-    @property
-    def n_muscle(self) -> int:
-        return self.mf_dcn.shape[0]
- 
-    def __repr__(self) -> str:
-        return (
-            f"Weights(source={self.source}, n_pf={self.n_pf}, "
-            f"n_muscle={self.n_muscle}, total={self.n_pf + 2 * self.n_muscle})"
-        )
- 
 def save_weights(
     fname: str | Path,
     results : brainData,
     meta: dict | None = None,
 ) -> None:
-    """Save final weights to an .npz archive, with an optional YAML metadata sidecar.
- 
+    """Save brain results to an .npz archive, with an optional YAML metadata sidecar.
+
     Args:
         fname: output path, e.g. "results/weights_exp_02.npz"
-        pf_pc: parallel fiber -> Purkinje cell weights, shape (n_pf,)
-        mf_dcn: mossy fiber -> DCN weights, shape (n_muscle,)
-        pc_dcn: Purkinje cell -> DCN weights, shape (n_muscle,)
+        results: brainData from runSimulation (PF-PC weights per trial, DCN spikes per step)
         meta: optional dict written to a sidecar fname.yaml (e.g. training notes,
             n_epochs, final_error)
  
@@ -284,7 +238,11 @@ def save_weights(
     """
     fname = Path(fname)
     fname.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(fname, pf_pc=np.asarray(results.pf_pc), dcn=np.asarray(results.dcn))
+    # DCN spikes are bit-packed along the neuron axis (8 spikes per byte); load_dcn() unpacks them.
+    # savez_compressed is lossless and shrinks pf_pc a lot, since rows of unvisited GCs never change.
+    dcn = np.asarray(results.dcn, dtype=bool)
+    np.savez_compressed(fname, pf_pc=np.asarray(results.pf_pc),
+                        dcn_packed=np.packbits(dcn, axis=-1), dcn_n=dcn.shape[-1])
  
     if meta:
         meta_path = fname.with_suffix(".yaml")
@@ -292,75 +250,15 @@ def save_weights(
             yaml.safe_dump(meta, f, sort_keys=False)
  
  
-def load_weights(fname: str | Path) -> Weights:
-    fname = Path(fname)
+def load_dcn(fname: str | Path) -> np.ndarray:
+    """DCN spikes saved by save_weights, as a bool array of shape (nTrials, trajLen, nDCNs)."""
     data = np.load(fname)
- 
-    meta_path = fname.with_suffix(".yaml")
-    meta = {}
-    if meta_path.exists():
-        with open(meta_path) as f:
-            meta = yaml.safe_load(f) or {}
- 
-    return Weights(
-        pf_pc=data["pf_pc"],
-        mf_dcn=data["mf_dcn"],
-        pc_dcn=data["pc_dcn"],
-        meta=meta,
-        source=fname,
-    )
+    if "dcn" in data:                           # files saved before bit-packing
+        return data["dcn"].astype(bool)
+    return np.unpackbits(data["dcn_packed"], axis=-1, count=int(data["dcn_n"])).astype(bool)
 
-def prepare_brain_weights(exp) -> tuple[dict[str, bool], Weights | None]:
-    """Resolve an Experiment's weight-loading config into what a sim needs to
-    initialize a brain: which sites are plastic (trainable), and the actual
-    arrays to load (real values for frozen sites, zeros for plastic ones).
- 
-    Replaces the old pattern of manually building/inverting a plasticSites
-    dict and multiplying arrays by `(not plastic)` to zero them out.
- 
-    Args:
-        exp: an Experiment with load_weight_groups and load_weights_from set
- 
-    Returns:
-        (plastic, weights)
-        plastic: dict of {"pf_pc": bool, "mf_dcn": bool, "pc_dcn": bool} —
-            True means this site should be trained/plastic during the sim.
-        weights: a Weights with real values for frozen (non-plastic) sites
-            and zero arrays (matching shape) for plastic sites, or None if
-            exp.load_weights_from is None (no file to load at all — nothing
-            is frozen, let the brain use its own default init).
- 
-    Example:
-        plastic, wts = prepare_brain_weights(exp)
-        brain.setActiveSites(plastic["pf_pc"], plastic["mf_dcn"], plastic["pc_dcn"])
-        if wts is not None:
-            brain.loadWts(wts.pf_pc, wts.mf_dcn, wts.pc_dcn)
-    """
-    plastic = {g: g in exp.plastic for g in ALL_WEIGHT_GROUPS}
-    load =    {g: g in exp.load_weight_groups for g in ALL_WEIGHT_GROUPS}
- 
-    if exp.initialWts is None:
-        return plastic, None
- 
-    # Load everything so plastic sites can be zeroed to the *correct* shape
-    # rather than loaded and discarded.
-    full = load_weights(exp.initialWts)
-    if exp.defaultWts is None:
-        zeroed = Weights(
-            pf_pc=full.pf_pc if load["pf_pc"] else np.zeros_like(full.pf_pc),
-            mf_dcn=full.mf_dcn if load["mf_dcn"] else np.zeros_like(full.mf_dcn),
-            pc_dcn=full.pc_dcn if load["pc_dcn"] else np.zeros_like(full.pc_dcn),
-            meta=full.meta,
-            source=full.source,
-        )
-    else:
-        default = load_weights(exp.defaultWts)
-        zeroed = Weights(
-            pf_pc=full.pf_pc if load["pf_pc"] else default.pf_pc,
-            mf_dcn=full.mf_dcn if load["mf_dcn"] else default.mf_dcn, 
-            pc_dcn=full.pc_dcn if load["pc_dcn"] else default.pc_dcn, 
-            meta=full.meta,
-            source=full.source,
-        )
 
-    return plastic, zeroed
+def load_pf_pc(fname: str | Path) -> np.ndarray:
+    """PF-PC weights after the last trial saved by save_weights, shape (n_pf, n_pc)."""
+    pf_pc = np.load(fname)["pf_pc"]
+    return pf_pc[-1] if pf_pc.ndim == 3 else pf_pc

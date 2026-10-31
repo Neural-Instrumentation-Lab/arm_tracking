@@ -434,8 +434,7 @@ class cerebellum:
                     # np.add.at is required (not fancy-index +=) because `rows`
                     # can contain duplicates -- the same GC may appear in
                     # multiple history batches, and each occurrence must
-                    # contribute its own kernel-weighted term; plain fancy
-                    # assignment silently drops repeated-index contributions.
+                    # contribute its own kernel-weighted term;
                     R = np.repeat(rows, cf_spike_idx.size)
                     C = np.tile(cf_spike_idx, rows.size)
                     V = np.repeat(cerebellum.BETA * k_nonzero, cf_spike_idx.size)
@@ -460,6 +459,13 @@ class cerebellum:
         self.prevDCN[-1] = torques
         corr = (self.TORQUE_ALPHA) * np.mean(self.prevDCN, axis=0)
         return corr
+
+    def loadWts(self, pf_pc):
+        """Pre-load PF-PC weights (e.g. from a previous experiment), shape (nGC*nJoints, nPC*nJoints)."""
+        pf_pc = np.asarray(pf_pc, dtype=np.float64)
+        if pf_pc.shape != self.pf_pc_wts.shape:
+            raise BrainError(f"loadWts: pf_pc must have shape {self.pf_pc_wts.shape}, got {pf_pc.shape}")
+        self.pf_pc_wts[:] = pf_pc
 
     def compute(self, q, qdes, qErr, dt=None):
         # dt is fixed at construction (kernel table, history window, filter taps depend on it)

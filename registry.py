@@ -1,5 +1,6 @@
 from pathlib import Path
 from experiment_assets import Experiment
+from bmi import DroppedDCNBMI
 
 # --- Central, self-documenting registry ------------------------------------
 # This replaces the "type 3 for experiment 3" problem: every experiment has
@@ -27,7 +28,6 @@ EXPERIMENTS: dict[str, Experiment] = {
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
-            load_weight_groups = (),
         ),
         Experiment(
             name="joystick",
@@ -38,11 +38,10 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "joystick.png",
             videos=VIDEO / "joystick.mp4",
             nDof=2,
-            nTrials=50,
+            nTrials=200,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
-            load_weight_groups = (),
         ),
         Experiment(
             name="small_timestep",
@@ -57,7 +56,6 @@ EXPERIMENTS: dict[str, Experiment] = {
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
-            load_weight_groups = (),
         ),
         Experiment(
             name="small_dt_brain",
@@ -68,11 +66,10 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "small_dt_brain.png",
             videos=VIDEO / "small_dt_brain.mp4",
             nDof=2,
-            nTrials=100,
+            nTrials=200,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=0.5e-3,
-            load_weight_groups = (),
         ),
         Experiment(
             name="complex_periodic",
@@ -83,11 +80,55 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "complex_periodic.png",
             videos=VIDEO / "complex_periodic.mp4",
             nDof=2,
+            nTrials=200,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=2e-3,
+        ),
+        Experiment(
+            name="joystick_few_dcn",
+            description="joystick circle, but the BMI only records 5 of the 50 DCNs in each agonist/antagonist group",
+            trajectory=TRAJS / "joystick.csv",
+            results=RESUL / "joystick_few_dcn.pkl",
+            finalWts=WTS / "joystick_few_dcn.npz",
+            graphs=GRAPH / "joystick_few_dcn.png",
+            videos=VIDEO / "joystick_few_dcn.mp4",
+            nDof=2,
+            nTrials=50,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=2e-3,
+            bmi=DroppedDCNBMI(n_drop=45, seed=0),
+        ),
+        Experiment(
+            name="joystick_pretrained",
+            description="joystick circle starting from the PF-PC weights learned by 'joystick' (run that with --save first)",
+            trajectory=TRAJS / "joystick.csv",
+            results=RESUL / "joystick_pretrained.pkl",
+            finalWts=WTS / "joystick_pretrained.npz",
+            graphs=GRAPH / "joystick_pretrained.png",
+            videos=VIDEO / "joystick_pretrained.mp4",
+            nDof=2,
+            nTrials=10,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=2e-3,
+            initialWts=WTS / "joystick.npz",
+        ),
+        Experiment(
+            name="complex_bmi_drop",
+            description="joystick on a figure 8 with harmonics, harder than the circle",
+            trajectory=TRAJS / "complex_periodic.csv",
+            results=RESUL / "complex_periodic_bmi.pkl",
+            finalWts=WTS / "complex_periodic_bmi.npz",
+            graphs=GRAPH / "complex_periodic_bmi.png",
+            videos=VIDEO / "complex_periodic_bmi.mp4",
+            nDof=2,
             nTrials=100,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
-            load_weight_groups = (),
+            bmi=DroppedDCNBMI(n_drop=45, seed=0),
         ),
     ]
 }

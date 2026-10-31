@@ -25,9 +25,9 @@ from collections import deque
 from arm_assets_v02 import armTraj, JoystickDotSimulator
 # from garrido_brain_v02 import cerebellum
 from garrido_brain import cerebellum   # C++ port of v02, build with build.sh
-from experiment_assets import load_trajectory, save_weights, brainData
+from experiment_assets import load_trajectory, save_weights, brainData, load_pf_pc
 from simulate import runSimulation
-from plot_results import plot_arm_results, plot_brain_results
+from plot_results import plot_arm_results, plot_brain_results, plot_dcn_raster
 from play_arm_path import animate_combined
 
 matplotlib.use('TkAgg')
@@ -92,6 +92,17 @@ def fillTrajectory(traj, arm):
         traj.joint_velocity, _ = getDerivatives(time, traj.joint_position)
     return traj
 
+def build_brain(exp, seed=None):
+    """
+    The experiment's brain, starting from exp.initialWts' final PF-PC weights if it has one.
+    seed makes the climbing-fiber draws reproducible (C++ brain only).
+    """
+    kwargs = {} if seed is None else {"seed": seed}
+    brain = cerebellum(list(exp.qMins), list(exp.qMaxs), n_dof=exp.nDof, dt=exp.brain_timestep, **kwargs)
+    if exp.initialWts is not None:
+        brain.loadWts(load_pf_pc(exp.initialWts))
+    return brain
+
 ###################################
 def simulate(exp, save, showOutput, makeMovie, reset=True):
 ###################################
@@ -105,9 +116,7 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
     trajFile   = exp.trajectory
     n_dof      = exp.nDof
     joystick   = JoystickDotSimulator()
-    # garrido_brain_small_dt.cerebellum also needs dt=exp.brain_timestep here
-    # brain      = cerebellum(list(exp.qMins), list(exp.qMaxs), n_dof=n_dof)
-    brain      = cerebellum(list(exp.qMins), list(exp.qMaxs), n_dof=n_dof, dt=exp.brain_timestep)
+    brain      = build_brain(exp)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
@@ -120,7 +129,7 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, nTrials=exp.nTrials, brain_dt=exp.brain_timestep, reset=reset)
+    final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, exp.bmi, nTrials=exp.nTrials, brain_dt=exp.brain_timestep, reset=reset)
     # the simulation has a random start point, so we unroll by offset
     # saving trajectories
     aligned_desired_pos = np.roll(desired_traj.pos, -offset, axis=0) 
@@ -138,5 +147,6 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
         animate_combined(final_traj, aligned_des, time)
     plot_arm_results(final_traj, aligned_des, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_brain_results(errorTot, time, brain, show=showOutput, saveLoc=exp.graphs, save=save)
+    plot_dcn_raster(brainResults, time, brain, exp.brain_timestep, reset=reset, show=showOutput, saveLoc=exp.graphs, save=save)
     print("Simulation Complete...")
     # playVideo(time, trajectories, arm_ids, arm, arm)

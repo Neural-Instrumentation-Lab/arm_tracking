@@ -5,18 +5,27 @@ from collections import deque
 DEL_AFF = 50e-3
 DEL_EFF = 50e-3
 
-def runSimulation(arm, desired_traj, time, brain, nTrials, brain_dt, reset=True):
+def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=True, record_brain=True, verbose=True):
     '''
     Controls the arm with the cerebellar feedback loop
+
+    bmi: decodes the brain's DCN spikes into the command sent to the arm (see bmi.py).
+         It is set up from the brain here, so it can be passed in fresh.
 
     reset: if True, every trial starts at a random point on the trajectory with the
            arm moved there and the delay queues cleared. If False, only the first trial
            does this and later trials continue from where the previous one ended
            (the trajectory is periodic).
+    record_brain: store DCN spikes / PF-PC weights every trial (large: nTrials x steps x nDCN).
+                  If False, the returned brainResults is None.
+    verbose: print a line after every trial
     '''
     # initialize parameters
+    bmi.setup(brain)
     n_steps = len(time)
-    brainResults = brainData(nTrials, n_steps, brain.nDCN*brain.nJoints, brain.nGC*brain.nJoints, brain.nPC*brain.nJoints)
+    brainResults = None
+    if record_brain:
+        brainResults = brainData(nTrials, n_steps, brain.nDCN*brain.nJoints, brain.nGC*brain.nJoints, brain.nPC*brain.nJoints)
     final_traj = armTraj(pos=np.zeros_like(desired_traj.pos),
                          vel=np.zeros_like(desired_traj.vel))
     errorTot = np.zeros(nTrials)
@@ -69,8 +78,8 @@ def runSimulation(arm, desired_traj, time, brain, nTrials, brain_dt, reset=True)
                 
             # compute corrections (using steps since last reset for frequency check)
             if elapsed % step == 0:
-                corr = np.array([0, 0])
-                corr = brain.compute(qSig[0], qSig[1], errSig[0], dt=brain_dt) 
+                brain.compute(qSig[0], qSig[1], errSig[0], dt=brain_dt)
+                corr = bmi.decode(brain.dcnOut)
                 prevComm.append(corr)
                 if elapsed >= delAff:
                     corrTorque = prevComm.popleft()
@@ -84,10 +93,13 @@ def runSimulation(arm, desired_traj, time, brain, nTrials, brain_dt, reset=True)
             trial_actual_pos.append(arm.getPos())
             final_traj.pos[step_idx, :] = arm.getPos()
             final_traj.vel[step_idx, :] = corrTorque
-            brainResults.dcn[trial, step_idx, :] = brain.dcnOut
+            if record_brain:
+                brainResults.dcn[trial, step_idx, :] = brain.dcnOut
             
-        print(f"trial {trial} done")
-        brainResults.pf_pc[trial, :] = brain.pf_pc_wts
+        if verbose:
+            print(f"trial {trial} done")
+        if record_brain:
+            brainResults.pf_pc[trial, :] = brain.pf_pc_wts
         
         # Calculate error comparing the exact desired sequence experienced during this trial
         trial_desired_pos = np.array([desired_traj.pos[(start_idx + s) % n_steps] for s in range(n_steps)])

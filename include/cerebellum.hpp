@@ -101,11 +101,11 @@ public:
         // exact refractory blocks PCs for a whole 2 ms tick after each spike, so PCs inhibit the
         // DCN less and DCN output roughly doubles; these were retuned for that
         if (keep_legacy_refractory) {
-            W_MF_DCN = 0.1e-9;
-            TORQUE_ALPHA.assign(nJoints, 0.24);
+            W_MF_DCN = 2.4e-9;
+            TORQUE_ALPHA.assign(nJoints, 0.02);
         } else {
-            W_MF_DCN = 0.2e-9;
-            TORQUE_ALPHA.assign(nJoints, 0.12);
+            W_MF_DCN = 2.4e-9;
+            TORQUE_ALPHA.assign(nJoints, 0.04);
         }
 
         // Constant drives are tonic conductances (S), not an impulse injected every tick.
@@ -191,6 +191,14 @@ public:
     std::vector<double> prevDCN;    // flat, row-major: [nTaps x nJoints]
 
     std::vector<double> kernelLookup;  // kernelLookup[lag] = ltd_kernel(-lag*dt), lag = 0..window
+
+    // pre-load PF-PC weights (e.g. from a previous experiment); flat, row-major [nGC*nJoints x n_pc_total]
+    void loadWts(const std::vector<double>& pf_pc) {
+        if (pf_pc.size() != pf_pc_wts.size())
+            throw BrainError("loadWts: expected " + std::to_string(pf_pc_wts.size()) + " PF-PC weights, got "
+                             + std::to_string(pf_pc.size()) + ".");
+        pf_pc_wts = pf_pc;
+    }
 
     // testing only: fix every climbing-fiber random draw to `value` (nullopt restores the RNG)
     void set_cf_draw_override(std::optional<double> value) {

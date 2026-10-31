@@ -185,6 +185,15 @@ PYBIND11_MODULE(garrido_brain, m) {
                  return py::array(py::cast(corr));
              },
              py::arg("q"), py::arg("qdes"), py::arg("qErr"), py::arg("dt") = py::none())
+        .def("loadWts", [](cerebellum& c, DoubleArray pf_pc) {
+                 const std::size_t rows = c.pf_pc_wts.size() / c.n_pc_total;
+                 if (pf_pc.ndim() != 2 || static_cast<std::size_t>(pf_pc.shape(0)) != rows
+                     || static_cast<std::size_t>(pf_pc.shape(1)) != c.n_pc_total)
+                     throw BrainError("loadWts: pf_pc must have shape (" + std::to_string(rows) + ", "
+                                      + std::to_string(c.n_pc_total) + ").");
+                 c.loadWts(std::vector<double>(pf_pc.data(), pf_pc.data() + pf_pc.size()));
+             },
+             py::arg("pf_pc"), "Pre-load PF-PC weights, shape (nGC*nJoints, nPC*nJoints).")
         .def("set_cf_draw_override", &cerebellum::set_cf_draw_override, py::arg("value"),
              "Testing only: fix every climbing-fiber random draw to `value` (None restores the RNG).")
         .def_readonly_static("ALPHA", &cerebellum::ALPHA)

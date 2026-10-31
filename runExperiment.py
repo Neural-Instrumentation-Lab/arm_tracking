@@ -11,6 +11,7 @@ Add a new experiment by adding one Experiment(...) entry to EXPERIMENTS below.
 
 from __future__ import annotations
 import argparse
+import dataclasses
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ import model_v02
 import play_arm_path
 import matplotlib.pyplot as plt
 from experiment_assets import build_dependencies
+from bmi import DroppedDCNBMI
 
 def print_list() -> None:
     width = max(len(name) for name in EXPERIMENTS) + 2
@@ -62,6 +64,10 @@ def main() -> None:
         help="outputs movie file. For a 1500 trial experiment, adds considerable runtime (2m 30s)."
     )
     parser.add_argument(
+        "--drop_dcn", type=int, default=None, metavar="N",
+        help="BMI drops N random DCNs from every agonist/antagonist group (overrides the experiment's bmi)"
+    )
+    parser.add_argument(
         "--noReset", action="store_true",
         help="Don't reset the arm to a random start point each trial; trials run back to back"
     )
@@ -73,6 +79,11 @@ def main() -> None:
         sys.exit(0 if args.list else 1)
 
     exp = EXPERIMENTS[args.experiment]
+    if args.drop_dcn is not None:
+        n_per_group = model_v02.cerebellum.nDCN // 2
+        if not 0 <= args.drop_dcn < n_per_group:
+            parser.error(f"--drop_dcn must be between 0 and {n_per_group - 1} (each group has {n_per_group} DCNs)")
+        exp = dataclasses.replace(exp, bmi=DroppedDCNBMI(args.drop_dcn))
     problems = exp.validate()
     if problems:
         deps = build_dependencies([exp], EXPERIMENTS)
@@ -91,7 +102,8 @@ def main() -> None:
         print(f"  nDof:      {exp.nDof}")
         print(f"  qMins:      {exp.qMins}")
         print(f"  qMaxs:      {exp.qMaxs}")
-        print(f"  brain_timestep:      {exp.brain_timestep}\n")
+        print(f"  brain_timestep:      {exp.brain_timestep}")
+        print(f"  bmi:      {exp.bmi}\n")
         return
 
     if not args.view:
@@ -110,6 +122,12 @@ def main() -> None:
             plt.axis('off')
             plt.imshow(maePlot)
             plt.show()
+            # results saved before the raster existed don't have one
+            rasterFile = exp.graphs.with_name(exp.graphs.stem + "_dcn_raster" + exp.graphs.suffix)
+            if rasterFile.exists():
+                plt.axis('off')
+                plt.imshow(plt.imread(rasterFile))
+                plt.show()
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")
