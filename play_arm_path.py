@@ -81,7 +81,7 @@ def animate_combined(actual_traj, desired_traj, time,
     :param save_path:   Optional path (e.g. 'out.gif' / 'out.mp4') to export.
     :return: the FuncAnimation object (keep a reference so it isn't garbage collected).
     """
-    names = list(names) if names else ["Actual", "Desired"]
+    names = list(names) if names else ["Actual", "Desired (50 ms ago)"]
  
     # Downsample everything with the SAME step so all four panels stay in sync.
     sample_rate = 1.0 / (time[1] - time[0])

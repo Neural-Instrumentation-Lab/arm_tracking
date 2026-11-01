@@ -5,6 +5,10 @@ from collections import deque
 DEL_AFF = 50e-3
 DEL_EFF = 50e-3
 
+def teachingLagSteps(time):
+    '''How many trajectory samples the desired state lags in the teaching signal and the MAE (the efferent delay).'''
+    return int(round(DEL_EFF * (len(time) / time[-1])))
+
 def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=True, record_brain=True, verbose=True):
     '''
     Controls the arm with the cerebellar feedback loop
@@ -33,7 +37,7 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
     step = int(round(n_steps / (np.floor(time[-1] / brain_dt) + 1), 0))
     
     # brain commands and inputs stored for delay
-    delEff = int(round(DEL_EFF * (n_steps / time[-1])))
+    delEff = teachingLagSteps(time)
     delAff = int(round(DEL_AFF * (n_steps / time[-1])))
     kp = [0.1, 0.1]
     
@@ -65,9 +69,11 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
             # Wrap around the circular trajectory using modulo
             i = (start_idx + step_idx) % n_steps
             
-            # compute error using the wrapped trajectory index (i)
-            qError  = desired_traj.pos[i].copy() - arm.getPos().copy()
-            qdError = desired_traj.vel[i].copy() - corrTorque; 
+            # teaching signal compares the dot with the desired state from 50 ms earlier (efferent delay),
+            # as EDLUT_BAXTER's error node does (same as the arm branch); the trajectory is periodic, so wrap
+            iLag    = (i - delEff) % n_steps
+            qError  = desired_traj.pos[iLag].copy() - arm.getPos().copy()
+            qdError = desired_traj.vel[iLag].copy() - corrTorque;
             prevErrors.append((qError.copy(), qdError.copy()))
             prevPos.append((arm.getPos().copy(), desired_traj.pos[i].copy(), corrTorque, desired_traj.vel[i].copy()))
             
@@ -90,7 +96,7 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
                 arm.step(corrTorque[0], corrTorque[1], dt)
             elapsed += 1
                 
-            trial_actual_pos.append(arm.getPos())
+            trial_actual_pos.append(arm.getPos().copy())   # the arm updates its position array in place
             final_traj.pos[step_idx, :] = arm.getPos()
             final_traj.vel[step_idx, :] = corrTorque
             if record_brain:
@@ -101,8 +107,8 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
         if record_brain:
             brainResults.pf_pc[trial, :] = brain.pf_pc_wts
         
-        # Calculate error comparing the exact desired sequence experienced during this trial
-        trial_desired_pos = np.array([desired_traj.pos[(start_idx + s) % n_steps] for s in range(n_steps)])
+        # MAE compares the same signals as the teaching signal: actual vs the desired state from 50 ms earlier
+        trial_desired_pos = np.array([desired_traj.pos[(start_idx + s - delEff) % n_steps] for s in range(n_steps)])
         errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des, act) in zip(trial_desired_pos, trial_actual_pos)])
         
     return final_traj, errorTot, start_idx, brainResults

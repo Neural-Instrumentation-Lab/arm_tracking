@@ -3,12 +3,20 @@ from matplotlib.animation import FuncAnimation
 import numpy as np
 from arm_assets_v02 import armTraj
 
+# every MAE plot uses this y-axis so experiments can be compared by eye
+MAE_YLIM = (0, 1.5)
+
+def apply_mae_ylim(ax, mae):
+    ax.set_ylim(*MAE_YLIM)
+    if np.max(mae) > MAE_YLIM[1]:
+        print(f"warning: MAE reaches {np.max(mae):.2f}, above the plot's fixed limit of {MAE_YLIM[1]}")
+
 def plot_arm_results(final_traj, desired_traj, show=True, save=False, saveLoc=None):
     # velocities of final trajectory
     fig, axs = plt.subplots()
     axs.plot(final_traj.vel)
     axs.plot(desired_traj.vel)
-    axs.legend(["x actual", "y actual", "x des", "y des"])
+    axs.legend(["x actual", "y actual", "x des (50 ms ago)", "y des (50 ms ago)"])
     if save:
         saveLoc.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(saveLoc.with_name(saveLoc.stem + "_commands" + saveLoc.suffix), dpi=300)
@@ -19,7 +27,9 @@ def plot_arm_results(final_traj, desired_traj, show=True, save=False, saveLoc=No
 def plot_brain_results(errorTot, time, brain, show=True, save=False, saveLoc=None):
     # MAE evolution graph
     fig, axs = plt.subplots()
-    axs.plot(errorTot/(len(time)*(brain.nJoints-1)))
+    mae = errorTot/(len(time)*(brain.nJoints-1))
+    axs.plot(mae)
+    apply_mae_ylim(axs, mae)
     axs.set_xlabel("Trial")
     axs.set_ylabel("Mean Absolute Error")
     axs.set_title("Evolution of MAE")

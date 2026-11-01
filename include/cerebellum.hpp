@@ -82,7 +82,7 @@ public:
 
     cerebellum(std::vector<double> qMins, std::vector<double> qMaxs,
                std::size_t n_dof = 6, double dt = LEGACY_DT,
-               bool keep_legacy_drive = true, bool keep_legacy_refractory = true,
+               bool keep_legacy_drive = false, bool keep_legacy_refractory = false,
                std::optional<uint64_t> seed = std::nullopt)
         : nJoints(n_dof),
           dt(dt),
@@ -105,7 +105,7 @@ public:
             TORQUE_ALPHA.assign(nJoints, 0.02);
         } else {
             W_MF_DCN = 2.4e-9;
-            TORQUE_ALPHA.assign(nJoints, 0.04);
+            TORQUE_ALPHA.assign(nJoints, 0.02);
         }
 
         // Constant drives are tonic conductances (S), not an impulse injected every tick.

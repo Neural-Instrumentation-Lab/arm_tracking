@@ -20,7 +20,7 @@ import model_v02
 import play_arm_path
 import matplotlib.pyplot as plt
 from experiment_assets import build_dependencies
-from bmi import DroppedDCNBMI
+from bmi import DroppedDCNBMI, SpikeDropBMI, ClusterBMI
 
 def print_list() -> None:
     width = max(len(name) for name in EXPERIMENTS) + 2
@@ -68,6 +68,14 @@ def main() -> None:
         help="BMI drops N random DCNs from every agonist/antagonist group (overrides the experiment's bmi)"
     )
     parser.add_argument(
+        "--drop_spike", type=float, default=None, metavar="P",
+        help="BMI loses each DCN spike with probability P, in [0, 1) (overrides the experiment's bmi)"
+    )
+    parser.add_argument(
+        "--cluster_dcn", type=int, default=None, metavar="N",
+        help="BMI reads clusters of N DCNs, a spike from any of them counts as one (overrides the experiment's bmi)"
+    )
+    parser.add_argument(
         "--noReset", action="store_true",
         help="Don't reset the arm to a random start point each trial; trials run back to back"
     )
@@ -84,6 +92,17 @@ def main() -> None:
         if not 0 <= args.drop_dcn < n_per_group:
             parser.error(f"--drop_dcn must be between 0 and {n_per_group - 1} (each group has {n_per_group} DCNs)")
         exp = dataclasses.replace(exp, bmi=DroppedDCNBMI(args.drop_dcn))
+    if sum(a is not None for a in (args.drop_dcn, args.drop_spike, args.cluster_dcn)) > 1:
+        parser.error("use only one of --drop_dcn, --drop_spike and --cluster_dcn")
+    if args.cluster_dcn is not None:
+        n_per_group = model_v02.cerebellum.nDCN // 2
+        if not 1 <= args.cluster_dcn <= n_per_group:
+            parser.error(f"--cluster_dcn must be between 1 and {n_per_group} (each group has {n_per_group} DCNs)")
+        exp = dataclasses.replace(exp, bmi=ClusterBMI(args.cluster_dcn))
+    if args.drop_spike is not None:
+        if not 0 <= args.drop_spike < 1:
+            parser.error("--drop_spike must be at least 0 and below 1")
+        exp = dataclasses.replace(exp, bmi=SpikeDropBMI(args.drop_spike))
     problems = exp.validate()
     if problems:
         deps = build_dependencies([exp], EXPERIMENTS)

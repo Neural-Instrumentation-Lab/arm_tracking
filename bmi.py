@@ -14,6 +14,9 @@ DCN layout (same as the brain): dcnOut has nDCN*nJoints entries, split into 2*nJ
 groups of nDCN/2 -- [joint 0 agonist, joint 0 antagonist, joint 1 agonist, ...].
 Agonist spikes push the joint positive, antagonist spikes push it negative.
 """
+from dataclasses import dataclass
+from typing import Callable
+
 import numpy as np
 
 # timestep TORQUE_ALPHA was tuned at; spike counts are re-expressed per LEGACY_DT tick
@@ -92,3 +95,87 @@ class DroppedDCNBMI(BMI):
 
     def __repr__(self):
         return f"DroppedDCNBMI(n_drop={self.n_drop}, seed={self.seed})"
+
+
+class SpikeDropBMI(BMI):
+    """
+    Loses every DCN spike independently with probability drop_prob (an unreliable recording).
+    The surviving count of each group is divided by (1 - drop_prob) so the command matches on
+    average, but capped at the group size: the most the normal brain could produce in one tick.
+    """
+
+    def __init__(self, drop_prob, seed=None):
+        self.drop_prob = float(drop_prob)
+        self.seed = seed
+
+    def setup(self, brain):
+        super().setup(brain)
+        if not 0 <= self.drop_prob < 1:
+            raise BMIError(f"drop_prob must be at least 0 and below 1 (got {self.drop_prob})")
+        self.rng = np.random.default_rng(self.seed)
+        return self
+
+    def group_counts(self, groups):
+        kept = groups & (self.rng.random(groups.shape) >= self.drop_prob)
+        return np.minimum(kept.sum(axis=1) / (1 - self.drop_prob), self.nPerGroup)
+
+    def __repr__(self):
+        return f"SpikeDropBMI(drop_prob={self.drop_prob}, seed={self.seed})"
+
+
+class ClusterBMI(BMI):
+    """
+    Can't tell the DCNs of a cluster apart: each agonist/antagonist group is split into clusters of
+    cluster_size neighbouring DCNs (the last is smaller if the size doesn't divide the group), and a
+    cluster registers one spike if any of its DCNs spiked. The count is scaled by nDCNs / nClusters,
+    so all clusters spiking reads the same as all DCNs spiking in the normal brain.
+    """
+
+    def __init__(self, cluster_size):
+        self.cluster_size = int(cluster_size)
+
+    def setup(self, brain):
+        super().setup(brain)
+        if not 1 <= self.cluster_size <= self.nPerGroup:
+            raise BMIError(f"cluster_size must be between 1 and {self.nPerGroup} (got {self.cluster_size})")
+        self.starts = np.arange(0, self.nPerGroup, self.cluster_size)
+        return self
+
+    def group_counts(self, groups):
+        active = np.logical_or.reduceat(groups, self.starts, axis=1)
+        return active.sum(axis=1) * (self.nPerGroup / len(self.starts))
+
+    def __repr__(self):
+        return f"ClusterBMI(cluster_size={self.cluster_size})"
+
+
+def _whole(value, name):
+    if float(value) != int(value):
+        raise BMIError(f"{name} values must be whole numbers of DCNs (got {value})")
+    return int(value)
+
+
+def _make_num_drop(value, seed):
+    return DroppedDCNBMI(_whole(value, "num_drop"), seed=seed)
+
+
+def _make_cluster(value, seed):
+    return ClusterBMI(_whole(value, "cluster"))
+
+
+@dataclass(frozen=True)
+class BMISweep:
+    """How dcn_sweep.py varies one kind of BMI. Add an entry to BMI_SWEEPS to make a new BMI sweepable."""
+    make: Callable             # (value, seed) -> BMI
+    values: tuple              # values swept by default
+    label: str                 # what a value means, used on the plots
+
+
+BMI_SWEEPS = {
+    "num_drop": BMISweep(_make_num_drop, (0, 20, 30, 40, 45, 48, 49),
+                         "DCNs dropped per agonist/antagonist group (of 50)"),
+    "spike_drop": BMISweep(SpikeDropBMI, (0, 0.25, 0.5, 0.75, 0.9, 0.95, 0.98),
+                           "Probability of dropping each DCN spike"),
+    "cluster": BMISweep(_make_cluster, (1, 2, 5, 10, 25, 50),
+                        "DCNs per cluster (of 50 per agonist/antagonist group)"),
+}

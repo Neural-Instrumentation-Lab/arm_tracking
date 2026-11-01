@@ -116,7 +116,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             initialWts=WTS / "joystick.npz",
         ),
         Experiment(
-            name="complex_bmi_drop",
+            name="complex_pretrained",
             description="joystick on a figure 8 with harmonics, harder than the circle",
             trajectory=TRAJS / "complex_periodic.csv",
             results=RESUL / "complex_periodic_bmi.pkl",
@@ -124,11 +124,11 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "complex_periodic_bmi.png",
             videos=VIDEO / "complex_periodic_bmi.mp4",
             nDof=2,
-            nTrials=100,
+            nTrials=50,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
-            bmi=DroppedDCNBMI(n_drop=45, seed=0),
+            initialWts=WTS / "complex_periodic.npz",
         ),
     ]
 }

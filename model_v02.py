@@ -26,7 +26,7 @@ from arm_assets_v02 import armTraj, JoystickDotSimulator
 # from garrido_brain_v02 import cerebellum
 from garrido_brain import cerebellum   # C++ port of v02, build with build.sh
 from experiment_assets import load_trajectory, save_weights, brainData, load_pf_pc
-from simulate import runSimulation
+from simulate import runSimulation, teachingLagSteps
 from plot_results import plot_arm_results, plot_brain_results, plot_dcn_raster
 from play_arm_path import animate_combined
 
@@ -130,10 +130,11 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
     final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, exp.bmi, nTrials=exp.nTrials, brain_dt=exp.brain_timestep, reset=reset)
-    # the simulation has a random start point, so we unroll by offset
-    # saving trajectories
-    aligned_desired_pos = np.roll(desired_traj.pos, -offset, axis=0) 
-    aligned_desired_vel = np.roll(desired_traj.vel, -offset, axis=0) 
+    # the simulation has a random start point, so we unroll by offset. The desired state is also
+    # delayed 50 ms, so the replay and plots show exactly what the teaching signal and MAE compare
+    shift = teachingLagSteps(time) - offset
+    aligned_desired_pos = np.roll(desired_traj.pos, shift, axis=0)
+    aligned_desired_vel = np.roll(desired_traj.vel, shift, axis=0)
     aligned_des = armTraj(pos= aligned_desired_pos, vel=aligned_desired_vel)
 
     trajectories = {1: aligned_des, 2: final_traj}
