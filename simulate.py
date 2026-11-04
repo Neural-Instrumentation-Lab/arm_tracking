@@ -9,7 +9,7 @@ def teachingLagSteps(time):
     '''How many trajectory samples the desired state lags in the teaching signal and the MAE (the efferent delay).'''
     return int(round(DEL_EFF * (len(time) / time[-1])))
 
-def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=True, record_brain=True, verbose=True):
+def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=True, record_brain=True, verbose=True, snapshot_every=None):
     '''
     Controls the arm with the cerebellar feedback loop
 
@@ -23,6 +23,8 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
     record_brain: store DCN spikes / PF-PC weights every trial (large: nTrials x steps x nDCN).
                   If False, the returned brainResults is None.
     verbose: print a line after every trial
+    snapshot_every: keep a copy of the arm's path every N trials (and the last trial), for the
+                    learning timelapse. Returned as a list of (trial, armTraj, start_idx); empty if None.
     '''
     # initialize parameters
     bmi.setup(brain)
@@ -33,6 +35,7 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
     final_traj = armTraj(pos=np.zeros_like(desired_traj.pos),
                          vel=np.zeros_like(desired_traj.vel))
     errorTot = np.zeros(nTrials)
+    snapshots = []
     
     step = int(round(n_steps / (np.floor(time[-1] / brain_dt) + 1), 0))
     
@@ -110,5 +113,8 @@ def runSimulation(arm, desired_traj, time, brain, bmi, nTrials, brain_dt, reset=
         # MAE compares the same signals as the teaching signal: actual vs the desired state from 50 ms earlier
         trial_desired_pos = np.array([desired_traj.pos[(start_idx + s - delEff) % n_steps] for s in range(n_steps)])
         errorTot[trial] = np.sum([np.linalg.norm(des - act) for (des, act) in zip(trial_desired_pos, trial_actual_pos)])
+
+        if snapshot_every and (trial % snapshot_every == 0 or trial == nTrials - 1):
+            snapshots.append((trial, armTraj(pos=final_traj.pos.copy(), vel=final_traj.vel.copy()), start_idx))
         
-    return final_traj, errorTot, start_idx, brainResults
+    return final_traj, errorTot, start_idx, brainResults, snapshots

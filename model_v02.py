@@ -28,7 +28,7 @@ from garrido_brain import cerebellum   # C++ port of v02, build with build.sh
 from experiment_assets import load_trajectory, save_weights, brainData, load_pf_pc
 from simulate import runSimulation, teachingLagSteps
 from plot_results import plot_arm_results, plot_brain_results, plot_dcn_raster
-from play_arm_path import animate_combined
+from play_arm_path import animate_combined, make_timelapse
 
 matplotlib.use('TkAgg')
 
@@ -111,6 +111,7 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
         exp: Experiment object, see experiment_assets.py
         save: whether to save the results or not
         showOutput: whether to show output or not
+        makeMovie: if set, saves an mp4 timelapse of the learning to exp.videos, showing every makeMovie-th trial
         reset: whether the arm is reset to a random start point every trial
     """
     trajFile   = exp.trajectory
@@ -129,7 +130,8 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot, offset, brainResults = runSimulation(joystick, desired_traj, time, brain, exp.bmi, nTrials=exp.nTrials, brain_dt=exp.brain_timestep, reset=reset)
+    final_traj, errorTot, offset, brainResults, snapshots = runSimulation(joystick, desired_traj, time, brain, exp.bmi, nTrials=exp.nTrials, brain_dt=exp.brain_timestep,
+                                                                          reset=reset, snapshot_every=makeMovie)
     # the simulation has a random start point, so we unroll by offset. The desired state is also
     # delayed 50 ms, so the replay and plots show exactly what the teaching signal and MAE compare
     shift = teachingLagSteps(time) - offset
@@ -149,5 +151,13 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
     plot_arm_results(final_traj, aligned_des, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_brain_results(errorTot, time, brain, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_dcn_raster(brainResults, time, brain, exp.brain_timestep, reset=reset, show=showOutput, saveLoc=exp.graphs, save=save)
+    if makeMovie:
+        # each snapshot has its own start point, so the desired path is aligned per trial
+        mae = errorTot/(len(time)*(brain.nJoints-1))
+        clips = [(trial, mae[trial], snap,
+                  armTraj(pos=np.roll(desired_traj.pos, teachingLagSteps(time) - start, axis=0),
+                          vel=np.roll(desired_traj.vel, teachingLagSteps(time) - start, axis=0)))
+                 for trial, snap, start in snapshots]
+        make_timelapse(clips, time, exp.videos)
     print("Simulation Complete...")
     # playVideo(time, trajectories, arm_ids, arm, arm)

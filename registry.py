@@ -128,6 +128,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
+            bmi=DroppedDCNBMI(n_drop=45, seed=0),
             initialWts=WTS / "complex_periodic.npz",
         ),
     ]

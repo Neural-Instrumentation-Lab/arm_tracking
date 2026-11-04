@@ -60,8 +60,8 @@ def main() -> None:
         help="Turns gravity off for the experiment"
     )
     parser.add_argument(
-        "--makeMovie", action="store_true",
-        help="outputs movie file. For a 1500 trial experiment, adds considerable runtime (2m 30s)."
+        "--makeMovie", type=int, nargs="?", const=5, default=None, metavar="N",
+        help="saves an mp4 timelapse of the learning to the experiment's videos path, showing every Nth trial (default 5)"
     )
     parser.add_argument(
         "--drop_dcn", type=int, default=None, metavar="N",
@@ -87,6 +87,8 @@ def main() -> None:
         sys.exit(0 if args.list else 1)
 
     exp = EXPERIMENTS[args.experiment]
+    if args.makeMovie is not None and args.makeMovie < 1:
+        parser.error("--makeMovie must be at least 1")
     if args.drop_dcn is not None:
         n_per_group = model_v02.cerebellum.nDCN // 2
         if not 0 <= args.drop_dcn < n_per_group:
@@ -122,7 +124,10 @@ def main() -> None:
         print(f"  qMins:      {exp.qMins}")
         print(f"  qMaxs:      {exp.qMaxs}")
         print(f"  brain_timestep:      {exp.brain_timestep}")
-        print(f"  bmi:      {exp.bmi}\n")
+        print(f"  bmi:      {exp.bmi}")
+        if args.makeMovie:
+            print(f"  video:      {exp.videos} (every {args.makeMovie} trials)")
+        print()
         return
 
     if not args.view:
@@ -150,7 +155,7 @@ def main() -> None:
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")
-            model_v02.simulate(exp, True, True, True, reset=not args.noReset)
+            model_v02.simulate(exp, True, True, args.makeMovie, reset=not args.noReset)
 
 
 if __name__ == "__main__":

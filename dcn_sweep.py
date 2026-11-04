@@ -44,7 +44,7 @@ def run_one(job):
 
     brain = build_brain(exp, seed)      # same brain (and initialWts) as runExperiment
     bmi = BMI_SWEEPS[bmi_name].make(value, seed)
-    _, errorTot, _, _ = runSimulation(joystick, desired, traj.time, brain, bmi, n_trials, brain_dt=exp.brain_timestep,
+    _, errorTot, _, _, _ = runSimulation(joystick, desired, traj.time, brain, bmi, n_trials, brain_dt=exp.brain_timestep,
                                       reset=reset, record_brain=False, verbose=False)
     mae = errorTot / (len(traj.time) * (brain.nJoints - 1))   # same normalization as plot_brain_results
     print(f"  {bmi} seed={seed}: final MAE {mae[-10:].mean():.3f}", flush=True)
