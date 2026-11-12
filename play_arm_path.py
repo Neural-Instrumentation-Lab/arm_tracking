@@ -1,7 +1,7 @@
 import pickle
 import pinocchio as pin
 from pinocchio.visualize import MeshcatVisualizer
-from arm_assets_v02 import dynamic_3dof_arm, dynamic_2dof_arm, baxter_reduced
+from arm_assets_v02 import baxter_reduced
 from experiment_assets import Experiment
 
 """
@@ -41,9 +41,12 @@ def load_trajectories(filename="path_exp.pkl"):
     return {key: Trajectory(v["pos"], v["arm"], v["dt"]) for key, v in data.items()}
  
  
-def play_traj(exp):
+def play_traj(exp, fps=30):
+    """
+    mirrors model_v02.playVideo, but reads the trajectories saved by
+    save_trajectories() instead of taking them from a live simulation
+    """
     trajectories = load_trajectories(filename=exp.results)
-    speed = 1
     prevChoice = 0
     while True:
         userTraj = input("select the trajectory to watch:\n1: desired trajectory"
@@ -57,7 +60,7 @@ def play_traj(exp):
                 print("no trajectory to replay")
                 continue
             else:
-                viz.play(traj.pos, traj.dt*speed)
+                viz.play(traj.pos, traj.dt)
                 continue
         else:
             try:
@@ -69,19 +72,11 @@ def play_traj(exp):
                 print("not valid input")
                 continue
         traj = trajectories[userTraj]
-        # makes viewer if the arm is different or first choice
         if prevChoice == 0 or traj.arm != trajectories[prevChoice].arm:
-            if userTraj == 4:
-                fpath = exp.illusoryArm
-            else:
-                fpath = exp.actualArm
-            if traj.pos.shape[1] == 2:
-                arm         = dynamic_2dof_arm(fpath, disp=False) 
-            if traj.pos.shape[1] == 3:
-                arm         = dynamic_3dof_arm(fpath, disp=False) 
-            if traj.pos.shape[1] == 7:
-                arm         = baxter_reduced(fpath, pkgDirs=["./"])
-            viz = initViz(arm)
-        viz.play(traj.pos, traj.dt*speed)
+            playArm = baxter_reduced(traj.arm, pkgDirs=["./"], disp=False)
+            viz = initViz(playArm)
+        # time vector isn't saved, so rebuild time[-1] from dt (time starts at 0)
+        duration = (len(traj.pos) - 1) * traj.dt
+        step = max(1, int(len(traj.pos) / (fps * duration)))
+        viz.play(traj.pos[::step], 1/fps)
         prevChoice = userTraj
- 
