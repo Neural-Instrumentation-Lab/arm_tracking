@@ -120,7 +120,10 @@ public:
         std::fill(widths.begin(), widths.end(), w);
     }
 
-    const std::vector<uint8_t>& step(double dt, double inp_I) {
+    // allow_trigger == false: only drain bursts already in flight. EDLUT_BAXTER's
+    // poisson_generator_node calls only the generator on the error's side each tick,
+    // so the other side starts no new bursts (not even at MIN_SPIKE_FREQ).
+    const std::vector<uint8_t>& step(double dt, double inp_I, bool allow_trigger = true) {
         // spikes inside a burst are CF_BURST_ISI_S apart (1 tick at the legacy 2 ms)
         const int64_t isi_ticks = std::max<int64_t>(1, py_round(CF_BURST_ISI_S / dt));
         for (int i = 0; i < n_neurons; ++i) {
@@ -132,6 +135,7 @@ public:
                 wait[i] = isi_ticks;
             }
         }
+        if (!allow_trigger) return spiked;
 
         for (int idx = 0; idx < n_neurons; ++idx) {
             if (spikes_pending[idx] != 0) continue;  // only idle neurons are eligible

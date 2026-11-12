@@ -100,7 +100,7 @@ class CFsubcomplexALT:
         self.spikes_pending = np.zeros(n_neurons, dtype=np.int64)
         self.wait = np.zeros(n_neurons, dtype=np.int64)   # ticks until the next burst spike
 
-    def step(self, dt, inp_I):
+    def step(self, dt, inp_I, allow_trigger=True):
         # spikes inside a burst are CF_BURST_ISI_S apart (1 tick at the legacy 2 ms)
         isi_ticks = max(1, int(round(CF_BURST_ISI_S / dt)))
         pending = self.spikes_pending > 0
@@ -108,6 +108,11 @@ class CFsubcomplexALT:
         spiked = pending & (self.wait <= 0)
         self.spikes_pending[spiked] -= 1
         self.wait[spiked] = isi_ticks
+        # allow_trigger=False: only drain bursts already in flight. EDLUT_BAXTER's
+        # poisson_generator_node calls only the generator on the error's side each tick,
+        # so the other side starts no new bursts (not even at MIN_SPIKE_FREQ).
+        if not allow_trigger:
+            return spiked
 
         idle = self.spikes_pending == 0
         idle_idx = np.nonzero(idle)[0]
@@ -304,17 +309,20 @@ class cerebellum:
 
     def encode_mf_address(self, state, value_ranges=DEFAULT_MF_VALUE_RANGES):
         """
-        Convert (q, qd, q_des, qd_des) into 4 digits in [0, 9], one per MF
-        subgroup, via uniform binning.
+        Convert (q, q_des) into 2 digits in [0, nMF_per_subgroup - 1], one per MF
+        subgroup. As in EDLUT_BAXTER's ROSRBFBank_delay: nMF_per_subgroup centers spaced
+        (hi-lo)/(nMF_per_subgroup-1) apart from lo to hi, the value is clamped to [lo, hi],
+        and the MF whose center is nearest fires (so the two end bins are half-width).
         Returns
         -------
         tuple of 2 ints, each in [0, N_MF_PER_SUBGROUP - 1]
         """
         digits = []
         for value, (lo, hi) in zip(state, value_ranges):
-            frac = (value - lo) / (hi - lo)
-            digit = int(frac * self.nMF_per_subgroup)
-            digit = int(np.clip(digit, 0, self.nMF_per_subgroup - 1))  
+            value = min(max(value, lo), hi)
+            center_step = (hi - lo) / (self.nMF_per_subgroup - 1)
+            digit = int(np.floor((value - lo) / center_step + 0.5))
+            digit = int(np.clip(digit, 0, self.nMF_per_subgroup - 1))
             digits.append(digit)
         return tuple(digits)
 
@@ -375,18 +383,18 @@ class cerebellum:
         sigError = kp * (qErr)
         # pError = self.errorCalc(sigError)
         # nError = self.errorCalc(-sigError)
-        pError = sigError
-        nError = -sigError
         # positive error -> agonist microzone (DCN half that pushes +). v01 had these swapped, which
         # only worked because its Euler-unstable DCN turned PC inhibition into excitation.
-        agonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
-        antagonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
+        # Only the error's side may start new bursts this tick (as in EDLUT_BAXTER: error > 0 ->
+        # positive generator, else negative generator with -error); the other side only finishes
+        # bursts in flight.
         for j in range(self.nJoints):
-            epsAgon  = agonist[j]
-            epsAAgon = antagonist[j]
+            positive = sigError[j] > 0
             startIdx = int(j * self.nCF)
-            self.cf_output[startIdx:startIdx+int(self.nCF/2)] = self.CF_complexes[j*2].step(dt, epsAgon)
-            self.cf_output[startIdx+int(self.nCF/2):startIdx+int(self.nCF)]  = self.CF_complexes[j*2+1].step(dt, epsAAgon)
+            self.cf_output[startIdx:startIdx+int(self.nCF/2)] = self.CF_complexes[j*2].step(
+                dt, sigError[j] if positive else 0.0, allow_trigger=positive)
+            self.cf_output[startIdx+int(self.nCF/2):startIdx+int(self.nCF)]  = self.CF_complexes[j*2+1].step(
+                dt, 0.0 if positive else -sigError[j], allow_trigger=not positive)
 
     def update_pf_pc_weights(self, pf_pc_wts, pf_spike_idx, cf_spike_idx, current_t, history):
         """

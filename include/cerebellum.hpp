@@ -213,18 +213,20 @@ public:
         return table;
     }
 
-    // Convert (q, q_des) into 2 digits in [0, nMF_per_subgroup - 1], one per MF subgroup,
-    // via uniform binning over [lo, hi].
+    // Convert (q, q_des) into 2 digits in [0, nMF_per_subgroup - 1], one per MF subgroup.
+    // As in EDLUT_BAXTER's ROSRBFBank_delay: nMF_per_subgroup centers spaced
+    // (hi-lo)/(nMF_per_subgroup-1) apart from lo to hi, the value is clamped to [lo, hi],
+    // and the MF whose center is nearest fires (so the two end bins are half-width).
     std::array<int, 2> encode_mf_address(const std::array<double, 2>& state,
                                           const std::array<std::pair<double, double>, 2>& value_ranges) const {
         std::array<int, 2> digits{};
         for (int i = 0; i < 2; ++i) {
             const double lo = value_ranges[i].first;
             const double hi = value_ranges[i].second;
-            const double frac = (state[i] - lo) / (hi - lo);
-            // int() truncates toward zero; clamping first keeps the cast defined for big values
-            const double scaled = std::clamp(frac * nMF_per_subgroup, -1.0, static_cast<double>(nMF_per_subgroup));
-            digits[i] = std::clamp(static_cast<int>(scaled), 0, nMF_per_subgroup - 1);
+            const double value = std::clamp(state[i], lo, hi);
+            const double center_step = (hi - lo) / (nMF_per_subgroup - 1);
+            const int digit = static_cast<int>(std::floor((value - lo) / center_step + 0.5));
+            digits[i] = std::clamp(digit, 0, nMF_per_subgroup - 1);
         }
         return digits;
     }
@@ -255,13 +257,15 @@ public:
         const std::size_t half = nCF / 2;
         for (std::size_t j = 0; j < nJoints; ++j) {
             const double sigError = CF_KP * qErr[j];
-            // positive error -> agonist microzone (DCN half that pushes +)
-            const double epsAgon = (sigError >= 0.0) ? sigError : 0.0;
-            const double epsAAgon = (sigError < 0.0) ? -sigError : 0.0;
+            // positive error -> agonist microzone (DCN half that pushes +).
+            // Only the error's side may start new bursts this tick (as in EDLUT_BAXTER:
+            // error > 0 -> positive generator, else negative generator with -error); the
+            // other side only finishes bursts in flight.
+            const bool positive = sigError > 0.0;
             const std::size_t startIdx = j * nCF;
-            const auto& agon = CF_complexes[j * 2].step(dt, epsAgon);
+            const auto& agon = CF_complexes[j * 2].step(dt, positive ? sigError : 0.0, positive);
             std::copy(agon.begin(), agon.end(), cf_output.begin() + startIdx);
-            const auto& antagon = CF_complexes[j * 2 + 1].step(dt, epsAAgon);
+            const auto& antagon = CF_complexes[j * 2 + 1].step(dt, positive ? 0.0 : -sigError, !positive);
             std::copy(antagon.begin(), antagon.end(), cf_output.begin() + startIdx + half);
         }
     }

@@ -135,9 +135,9 @@ PYBIND11_MODULE(garrido_brain, m) {
     // ---------------- CFsubcomplexALT ----------------
     py::class_<CFsubcomplexALT>(m, "CFsubcomplexALT")
         .def(py::init<int, std::optional<uint64_t>>(), py::arg("n_neurons") = 50, py::arg("seed") = py::none())
-        .def("step", [](CFsubcomplexALT& c, double dt, double inp_I) {
-                 return to_bool_array(c.step(dt, inp_I));
-             }, py::arg("dt"), py::arg("inp_I"))
+        .def("step", [](CFsubcomplexALT& c, double dt, double inp_I, bool allow_trigger) {
+                 return to_bool_array(c.step(dt, inp_I, allow_trigger));
+             }, py::arg("dt"), py::arg("inp_I"), py::arg("allow_trigger") = true)
         .def_readonly("n_neurons", &CFsubcomplexALT::n_neurons)
         .def_readonly("centers", &CFsubcomplexALT::centers)
         .def_readonly("widths", &CFsubcomplexALT::widths)
