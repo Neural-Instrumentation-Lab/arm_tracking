@@ -397,7 +397,16 @@ class dynamic_2dof_arm(dynamic_3dof_arm):
                 print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
 
 class baxter_reduced(dynamic_3dof_arm):
-    def __init__(self, filename, pkgDirs=None, disp=True):
+    # Torque (Nm) the shoulder counterbalance springs supply at s1. The real Baxter has them; the
+    # URDF doesn't, and EDLUT_BAXTER only suppresses Rethink's *software* gravity compensation.
+    # Without the spring, s1 needs about -40 to -50 Nm on the circle, more than the paper's decoder
+    # (alpha_s1 = 1.0, ~25-28 Nm at most) can output. The exact spring curve isn't published (cursory
+    # sources say ~30-50 Nm); 30 Nm leaves ~9-22 Nm of s1 load on the circle. Set per experiment with
+    # Experiment.s1_spring_torque; model_v02 turns the spring off under --no_grav, since there is then
+    # no gravity for it to balance.
+    DEFAULT_S1_SPRING_TORQUE = 30.0
+
+    def __init__(self, filename, pkgDirs=None, disp=True, s1_spring_torque=DEFAULT_S1_SPRING_TORQUE):
         '''
         creates arm from file.
         this arm is constructed from the tables in the Garrido 2013 paper. (Appendix B)
@@ -405,6 +414,8 @@ class baxter_reduced(dynamic_3dof_arm):
         Args:
             filename: urdf filepath describing the arm config.
             disp (optional): if true prints out the neutral configuration of the arm
+            s1_spring_torque (optional): constant torque (Nm) of the s1 counterbalance spring. It always
+                acts against gravity and is included in both forward() and inverse(). 0 disables it.
         '''
         # initializes from urdf file
         # https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/devel/doxygen-html/md_doc_b-examples_e-reduced-model.html
@@ -434,6 +445,18 @@ class baxter_reduced(dynamic_3dof_arm):
 
         self.qdSuppMin = np.array([-0.79, -0.75, -0.055, -1.8, -0.225, -1.1])
         self.qdSuppMax = np.array([0.53, 0.75, 0.08, 1.81, 0.097, 1.1])
+        # measured-velocity MF range (circle_trajectory.launch, rbf_node_current_velocity)
+        self.qdCurSuppMin = np.array([-0.87, -0.85, -0.06, -1.9, -0.25, -1.25])
+        self.qdCurSuppMax = np.array([0.61, 0.85, 0.13, 1.9, 0.12, 1.25])
+
+        # s1 counterbalance spring. Its generalized torque has the same sign as the torque needed to
+        # hold the arm against gravity (it does part of that holding); the sign is read from the model
+        # at the middle of the working range, so it doesn't depend on the URDF's axis convention.
+        self.s1_spring_torque = float(s1_spring_torque)
+        self.s1_idx = self.model.joints[self.model.getJointId("left_s1")].idx_v
+        q_mid = np.zeros(self.model.nq)
+        q_mid[:6] = (self.qSuppMin + self.qSuppMax) / 2
+        self.s1_spring_sign = np.sign(pin.computeGeneralizedGravity(self.model, self.data, q_mid)[self.s1_idx])
 
         if disp:
             # print neutral config
@@ -445,6 +468,39 @@ class baxter_reduced(dynamic_3dof_arm):
             # Print out the placement of each joint of the kinematic tree
             for name, oMi in zip(self.model.names, self.data.oMi):
                 print("{:<24} : {: .2f} {: .2f} {: .2f}".format(name, *oMi.translation.T.flat))
+
+    def springTorque(self, position):
+        '''
+        generalized torque the s1 counterbalance spring applies at this configuration
+        (constant for now; position is taken so a position-dependent spring can drop in)
+        '''
+        tau = np.zeros(self.model.nv)
+        tau[self.s1_idx] = self.s1_spring_sign * self.s1_spring_torque
+        return tau
+
+    def dampingTorque(self, velocity):
+        '''
+        generalized torque from the joints' viscous damping (the URDF's <dynamics damping>, 0.7 Nm s/rad
+        on Baxter). Pinocchio loads it into model.damping but aba/rnea ignore it, so it's applied here,
+        in both forward() and inverse(), and is always on. Without it the arm was frictionless: DCN
+        torque spikes went straight into motion, and the light wrist and elbow links jittered and
+        drifted from trial to trial (150-trial circle A/B: MAE 0.116 -> 0.063 rad with damping).
+        '''
+        return -self.model.damping * np.asarray(velocity)
+
+    def forward(self, position, velocity, torque):
+        '''
+        joint accelerations under the commanded torque plus the s1 spring and joint damping
+        '''
+        return super().forward(position, velocity,
+                               np.asarray(torque) + self.springTorque(position) + self.dampingTorque(velocity))
+
+    def inverse(self, position, velocity, accel):
+        '''
+        torque the motors must supply for this motion, given that the s1 spring and joint damping supply the rest
+        '''
+        return (super().inverse(position, velocity, accel)
+                - self.springTorque(position) - self.dampingTorque(velocity))
 
     def fit_rigid_transform(self, A, B):
         """

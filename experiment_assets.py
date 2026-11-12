@@ -27,6 +27,7 @@ class Experiment:
     initialWts: Path | None = None        # .npz of initial weights of brain, only sites specified from load_weight_groups loaded
     defaultWts: Path | None = None        # .npz file with initial weights of the sites not in load_weight_groups. If not given defaults to 0s
     plastic: tuple[WeightGroup, ...] = ALL_WEIGHT_GROUPS # what sites in the brain are plastic
+    s1_spring_torque: float | None = None # s1 counterbalance spring torque (Nm). None -> baxter_reduced's default
 
     def validate(self, assume_produced: frozenset[Path] = frozenset()) -> list[str]:
         """Return a list of problems (missing files etc). Empty list = OK.

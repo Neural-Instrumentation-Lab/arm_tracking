@@ -83,7 +83,7 @@ PYBIND11_MODULE(garrido_brain, m) {
     // ---------------- CFsubcomplexALT ----------------
     py::class_<CFsubcomplexALT>(m, "CFsubcomplexALT")
         .def(py::init<int>(), py::arg("n_neurons") = 50)
-        .def("step", &CFsubcomplexALT::step, py::arg("dt"), py::arg("inp_I"))
+        .def("step", &CFsubcomplexALT::step, py::arg("dt"), py::arg("inp_I"), py::arg("allow_trigger") = true)
         .def_readonly("n_neurons", &CFsubcomplexALT::n_neurons)
         .def_readonly("centers", &CFsubcomplexALT::centers)
         .def_readonly("widths", &CFsubcomplexALT::widths)
@@ -118,8 +118,10 @@ PYBIND11_MODULE(garrido_brain, m) {
 
     // ---------------- cerebellum ----------------
     py::class_<cerebellum>(m, "cerebellum")
-        .def(py::init<std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::size_t>(),
-             py::arg("qMins"), py::arg("qdMins"), py::arg("qMaxs"), py::arg("qdMaxs"), py::arg("n_dof") = 6)
+        .def(py::init<std::vector<double>, std::vector<double>, std::vector<double>, std::vector<double>, std::size_t,
+                      std::vector<double>, std::vector<double>>(),
+             py::arg("qMins"), py::arg("qdMins"), py::arg("qMaxs"), py::arg("qdMaxs"), py::arg("n_dof") = 6,
+             py::arg("qdCurMins") = std::vector<double>{}, py::arg("qdCurMaxs") = std::vector<double>{})
         .def("compute", &cerebellum::compute,
              py::arg("q"), py::arg("qd"), py::arg("qdes"), py::arg("qddes"),
              py::arg("qErr"), py::arg("qdErr"), py::arg("dt") = 2e-3)

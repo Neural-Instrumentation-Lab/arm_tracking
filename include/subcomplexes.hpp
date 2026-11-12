@@ -111,11 +111,15 @@ public:
         std::fill(widths.begin(), widths.end(), w);
     }
 
-    std::vector<uint8_t> step(double dt, double inp_I) {
+    // allow_trigger == false: only drain bursts already in flight. EDLUT_BAXTER's
+    // poisson_generator_node calls only the generator on the error's side each tick,
+    // so the other side starts no new bursts (not even at MIN_SPIKE_FREQ).
+    std::vector<uint8_t> step(double dt, double inp_I, bool allow_trigger = true) {
         std::vector<uint8_t> spiked(n_neurons, 0);
         for (int i = 0; i < n_neurons; ++i) spiked[i] = spikes_pending[i] > 0;
         for (int i = 0; i < n_neurons; ++i)
             if (spiked[i]) spikes_pending[i] -= 1;
+        if (!allow_trigger) return spiked;
 
         for (int idx = 0; idx < n_neurons; ++idx) {
             if (spikes_pending[idx] != 0) continue;  // only idle neurons are eligible

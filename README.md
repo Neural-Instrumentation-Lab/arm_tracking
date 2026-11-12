@@ -3,8 +3,8 @@
 Code from the arm-tracking project originally developed through Iyad Obeid's NSF Career grant.
 
 This branch drives a simulated Baxter arm (right arm locked; the left arm's 7 joints move) along a
-circular end-effector trajectory. A spiking cerebellar model corrects the arm's joint torques on
-top of a feedforward inverse-dynamics command. The cerebellum is a recreation of the
+circular end-effector trajectory. A spiking cerebellar model generates the arm's joint torques.
+The cerebellum is a recreation of the
 model in *On Robot Compliance: A Cerebellar Control Approach* (Abadía, Naveros, Garrido, Ros,
 Luque), see `reading/`.
 
@@ -99,7 +99,9 @@ but easier to debug), change the import near the top of `model_v02.py`:
 import garrido_brain_v01 as gb
 ```
 
-Both take the same constructor arguments, `cerebellum(qMins, qdMins, qMaxs, qdMaxs, n_dof)`.
+Both take the same constructor arguments, `cerebellum(qMins, qdMins, qMaxs, qdMaxs, n_dof, qdCurMins, qdCurMaxs)`.
+`qdMins`/`qdMaxs` set the desired-velocity MF range; the optional `qdCurMins`/`qdCurMaxs` set the
+measured-velocity range and default to the desired-velocity range.
 The brain controls the first 6 joints; joint `w2` is left uncontrolled.
 
 ### Key simulation settings
@@ -131,6 +133,7 @@ Experiment(
     initialWts=None,                            # where initial weights are stored (OPTIONAL)
     defaultWts=None,                            # synapses not in load_weight_groups are loaded from this file. If not given, default is 0 for all weights. (OPTIONAL)
     plastic=('pf_pc', 'mf_dcn', 'pc_dcn'),      # which synaptic sites are plastic during the experiment. Default is all (OPTIONAL)
+    s1_spring_torque=30.0,                      # s1 spring torque in Nm, see baxter_reduced in arm_assets_v02.py (OPTIONAL)
 ),
 ```
 

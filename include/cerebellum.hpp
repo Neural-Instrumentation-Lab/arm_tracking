@@ -48,14 +48,20 @@ public:
     static constexpr double W_MAX = 5e-9;
 
     // Signature order matches the Python constructor exactly:
-    // __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6)
+    // __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6, qdCurMins=None, qdCurMaxs=None)
+    // qdMins/qdMaxs encode the desired velocity; qdCurMins/qdCurMaxs encode the
+    // measured velocity (EDLUT_BAXTER gives the two RBF banks separate ranges).
+    // Left empty, the measured velocity uses the desired velocity's range.
     cerebellum(std::vector<double> qMins, std::vector<double> qdMins,
                std::vector<double> qMaxs, std::vector<double> qdMaxs,
-               std::size_t n_dof = 6)
+               std::size_t n_dof = 6,
+               std::vector<double> qdCurMins = {}, std::vector<double> qdCurMaxs = {})
         : nJoints(n_dof),
           t(0),
           qmins(std::move(qMins)), qdmins(std::move(qdMins)),
           qmaxs(std::move(qMaxs)), qdmaxs(std::move(qdMaxs)),
+          qdcurmins(qdCurMins.empty() ? qdmins : std::move(qdCurMins)),
+          qdcurmaxs(qdCurMaxs.empty() ? qdmaxs : std::move(qdCurMaxs)),
           gcNeurons(nGC * n_dof, GC_params),
           gc_ampa_input(nGC * n_dof, 0.0),
           cf_output(nCF * n_dof, 0),
@@ -77,14 +83,15 @@ public:
                 "TORQUE_ALPHA and the climbing-fiber kp/kd gains for a 6-DOF arm.");
         }
         if (qmins.size() != nJoints || qmaxs.size() != nJoints ||
-            qdmins.size() != nJoints || qdmaxs.size() != nJoints) {
-            throw BrainError("cerebellum: qMins/qdMins/qMaxs/qdMaxs must each have n_dof elements.");
+            qdmins.size() != nJoints || qdmaxs.size() != nJoints ||
+            qdcurmins.size() != nJoints || qdcurmaxs.size() != nJoints) {
+            throw BrainError("cerebellum: qMins/qdMins/qMaxs/qdMaxs/qdCurMins/qdCurMaxs must each have n_dof elements.");
         }
 
         for (std::size_t j = 0; j < nJoints; ++j) {
             MF_complexesQ.emplace_back(qmins[j], qmaxs[j], nMF_per_subgroup);
             MF_complexesQdes.emplace_back(qmins[j], qmaxs[j], nMF_per_subgroup);
-            MF_complexesQd.emplace_back(qdmins[j], qdmaxs[j], nMF_per_subgroup);
+            MF_complexesQd.emplace_back(qdcurmins[j], qdcurmaxs[j], nMF_per_subgroup);
             MF_complexesQddes.emplace_back(qdmins[j], qdmaxs[j], nMF_per_subgroup);
         }
         mf_out.assign(nMF * nJoints, 0.0);
@@ -113,8 +120,9 @@ public:
 
     // TORQUE_ALPHA is a per-instance list in Python; here it's a fixed
     // 6-element array (n_dof is required to be 6 -- see constructor).
-    // J2 and J4 are 3x the paper's alpha_j: the real Baxter compensated gravity itself, this sim doesn't
-    static constexpr std::array<double, 6> TORQUE_ALPHA = {0.75, 3.0, 0.375, 1.5, 0.05, 0.05};
+    // The paper's alpha_j (EDLUT_BAXTER spike_decoder delta_spike_list). s1's gravity load is
+    // reduced by the counterbalance spring modelled in arm_assets_v02.baxter_reduced.
+    static constexpr std::array<double, 6> TORQUE_ALPHA = {0.75, 1.0, 0.375, 0.5, 0.05, 0.05};
 
     static constexpr std::size_t nGC = 10000;   // nMF_per_subgroup ** nMF_subgroups
     static constexpr std::size_t nCF = 100;
@@ -122,6 +130,7 @@ public:
     static constexpr std::size_t nDCN = 100;
 
     std::vector<double> qmins, qdmins, qmaxs, qdmaxs;
+    std::vector<double> qdcurmins, qdcurmaxs;  // measured-velocity MF range
 
     static constexpr double effDelay = 50e-3;  // unused downstream, kept for parity
     static constexpr double affDelay = 50e-3;
@@ -174,16 +183,18 @@ public:
     }
 
     // Convert (q, qd, q_des, qd_des) into 4 digits in [0, 9], one per MF
-    // subgroup, via uniform binning.
+    // subgroup. As in EDLUT_BAXTER's ROSRBFBank_delay: 10 centers spaced
+    // (hi-lo)/9 apart from lo to hi, the value is clamped to [lo, hi], and the
+    // MF whose center is nearest fires (so the two end bins are half-width).
     std::array<int, 4> encode_mf_address(const std::array<double, 4>& state,
                                           const std::array<std::pair<double, double>, 4>& value_ranges) const {
         std::array<int, 4> digits{};
         for (int i = 0; i < 4; ++i) {
-            const double value = state[i];
             const double lo = value_ranges[i].first;
             const double hi = value_ranges[i].second;
-            const double frac = (value - lo) / (hi - lo);
-            int digit = static_cast<int>(frac * nMF_per_subgroup);
+            const double value = std::clamp(state[i], lo, hi);
+            const double center_step = (hi - lo) / (nMF_per_subgroup - 1);
+            int digit = static_cast<int>(std::floor((value - lo) / center_step + 0.5));
             digit = std::clamp(digit, 0, nMF_per_subgroup - 1);
             digits[i] = digit;
         }
@@ -211,7 +222,7 @@ public:
             std::array<double, 4> state{q[j], qd[j], qdes[j], qddes[j]};
             std::array<std::pair<double, double>, 4> ranges{{
                 {qmins[j], qmaxs[j]},
-                {qdmins[j], qdmaxs[j]},
+                {qdcurmins[j], qdcurmaxs[j]},
                 {qmins[j], qmaxs[j]},
                 {qdmins[j], qdmaxs[j]},
             }};
@@ -234,24 +245,18 @@ public:
         static constexpr std::array<double, 6> kp = {1.5, 2, 3, 2, 3, 3};
         static constexpr std::array<double, 6> kd = {1.5, 1, 3, 1, 3, 0.5};
 
-        std::vector<double> agonist(nJoints), antagonist(nJoints);
         for (std::size_t j = 0; j < nJoints; ++j) {
             const double sigError = kp[j] * qErr[j] + kd[j] * qdErr[j];
-            const double pError = sigError;
-            const double nError = -sigError;
-            // positive error -> agonist microzone (DCN half that pushes +)
-            agonist[j] = (sigError >= 0.0) ? pError : 0.0;
-            antagonist[j] = (sigError < 0.0) ? nError : 0.0;
-        }
-
-        for (std::size_t j = 0; j < nJoints; ++j) {
-            const double epsAgon = agonist[j];
-            const double epsAAgon = antagonist[j];
+            // positive error -> agonist microzone (DCN half that pushes +).
+            // Only the error's side may start new bursts this tick (as in
+            // EDLUT_BAXTER: error > 0 -> positive generator, else negative
+            // generator with -error); the other side only finishes bursts in flight.
+            const bool positive = sigError > 0.0;
             const std::size_t startIdx = j * nCF;
             const std::size_t half = nCF / 2;
 
-            auto spiked_agon = CF_complexes[j * 2].step(dt, epsAgon);
-            auto spiked_antagon = CF_complexes[j * 2 + 1].step(dt, epsAAgon);
+            auto spiked_agon = CF_complexes[j * 2].step(dt, positive ? sigError : 0.0, positive);
+            auto spiked_antagon = CF_complexes[j * 2 + 1].step(dt, positive ? 0.0 : -sigError, !positive);
             std::copy(spiked_agon.begin(), spiked_agon.end(), cf_output.begin() + startIdx);
             std::copy(spiked_antagon.begin(), spiked_antagon.end(), cf_output.begin() + startIdx + half);
         }

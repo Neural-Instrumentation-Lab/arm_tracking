@@ -81,9 +81,14 @@ class CFsubcomplexALT:
         self.rng = np.random.default_rng()
         self.spikes_pending = np.zeros(n_neurons, dtype=np.int64)
 
-    def step(self, dt, inp_I):
+    def step(self, dt, inp_I, allow_trigger=True):
         spiked = self.spikes_pending > 0
         self.spikes_pending[spiked] -= 1
+        # allow_trigger=False: only drain bursts already in flight. EDLUT_BAXTER's
+        # poisson_generator_node calls only the generator on the error's side each tick,
+        # so the other side starts no new bursts (not even at MIN_SPIKE_FREQ).
+        if not allow_trigger:
+            return spiked
 
         idle = self.spikes_pending == 0
         idle_idx = np.nonzero(idle)[0]
@@ -187,7 +192,9 @@ class cerebellum:
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
 
-    def __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6):
+    def __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6, qdCurMins=None, qdCurMaxs=None):
+        # qdMins/qdMaxs encode the desired velocity; qdCurMins/qdCurMaxs encode the measured
+        # velocity (EDLUT_BAXTER gives the two RBF banks separate ranges). None -> same as desired.
         self.nJoints = n_dof
         self.t = 0
         # these numbers are all PER JOINT
@@ -199,8 +206,9 @@ class cerebellum:
         self.W_MF_DCN   = 2.4e-9 
         self.W_CF_DCN_AMPA  = 0.5e-9
         self.W_CF_DCN_NMDA  = 0.25e-9
-        # J2 and J4 are 3x the paper's alpha_j: the real Baxter compensated gravity itself, this sim doesn't
-        self.TORQUE_ALPHA  = [0.75, 3.0, 0.375, 1.5, 0.05, 0.05]
+        # The paper's alpha_j (EDLUT_BAXTER spike_decoder delta_spike_list). s1's gravity load is
+        # reduced by the counterbalance spring modelled in arm_assets_v02.baxter_reduced.
+        self.TORQUE_ALPHA  = [0.75, 1.0, 0.375, 0.5, 0.05, 0.05]
 
         self.nGC      = self.nMF_per_subgroup ** self.nMF_subgroups 
         self.nCF      = 100
@@ -211,6 +219,8 @@ class cerebellum:
         self.qmaxs = qMaxs
         self.qdmins = qdMins
         self.qdmaxs = qdMaxs
+        self.qdcurmins = qdMins if qdCurMins is None or len(qdCurMins) == 0 else qdCurMins
+        self.qdcurmaxs = qdMaxs if qdCurMaxs is None or len(qdCurMaxs) == 0 else qdCurMaxs
 
         self.effDelay = 50e-3
         self.affDelay = 50e-3
@@ -229,7 +239,7 @@ class cerebellum:
 
         self.MF_complexesQ      = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
         self.MF_complexesQdes   = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qMins, qMaxs)]
-        self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdMaxs)]
+        self.MF_complexesQd     = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(self.qdcurmins, self.qdcurmaxs)]
         self.MF_complexesQddes  = [MFsubcomplex(mi, ma, self.nMF_per_subgroup) for (mi, ma) in zip(qdMins, qdMaxs)]
         self.mf_out     = np.zeros(self.nMF * n_dof, dtype=np.float64)
 
@@ -257,16 +267,19 @@ class cerebellum:
     def encode_mf_address(self, state, value_ranges=DEFAULT_MF_VALUE_RANGES):
         """
         Convert (q, qd, q_des, qd_des) into 4 digits in [0, 9], one per MF
-        subgroup, via uniform binning.
+        subgroup. As in EDLUT_BAXTER's ROSRBFBank_delay: 10 centers spaced
+        (hi-lo)/9 apart from lo to hi, the value is clamped to [lo, hi], and the
+        MF whose center is nearest fires (so the two end bins are half-width).
         Returns
         -------
         tuple of 4 ints, each in [0, N_MF_PER_SUBGROUP - 1]
         """
         digits = []
         for value, (lo, hi) in zip(state, value_ranges):
-            frac = (value - lo) / (hi - lo)
-            digit = int(frac * self.nMF_per_subgroup)
-            digit = int(np.clip(digit, 0, self.nMF_per_subgroup - 1))  
+            value = min(max(value, lo), hi)
+            center_step = (hi - lo) / (self.nMF_per_subgroup - 1)
+            digit = int(np.floor((value - lo) / center_step + 0.5))
+            digit = int(np.clip(digit, 0, self.nMF_per_subgroup - 1))
             digits.append(digit)
         return tuple(digits)
 
@@ -309,8 +322,8 @@ class cerebellum:
         """
         for j in range(self.nJoints):
             digits = self.encode_mf_address((q[j], qd[j], qdes[j], qddes[j]), ((self.qmins[j], self.qmaxs[j]), 
-                                                                               (self.qdmins[j], self.qdmaxs[j]), 
-                                                                               (self.qmins[j], self.qmaxs[j]), 
+                                                                               (self.qdcurmins[j], self.qdcurmaxs[j]),
+                                                                               (self.qmins[j], self.qmaxs[j]),
                                                                                (self.qdmins[j], self.qdmaxs[j])))
             addressed_index = self.address_to_gc_index(digits, j)
             self.gc_ampa_input[addressed_index] = self.W_MF_GC * self.nMF_subgroups
@@ -330,17 +343,17 @@ class cerebellum:
         sigError = kp * (qErr) + kd * (qdErr)
         # pError = self.errorCalc(sigError)
         # nError = self.errorCalc(-sigError)
-        pError = sigError
-        nError = -sigError
-        # positive error -> agonist microzone (DCN half that pushes +)
-        agonist = [x if y >= 0 else 0 for (x,y) in zip(pError, sigError)]
-        antagonist = [x if y < 0 else 0 for (x,y) in zip(nError, sigError)]
+        # positive error -> agonist microzone (DCN half that pushes +).
+        # Only the error's side may start new bursts this tick (as in EDLUT_BAXTER:
+        # error > 0 -> positive generator, else negative generator with -error);
+        # the other side only finishes bursts in flight.
         for j in range(self.nJoints):
-            epsAgon  = agonist[j]
-            epsAAgon = antagonist[j]
+            positive = sigError[j] > 0
             startIdx = int(j * self.nCF)
-            self.cf_output[startIdx:startIdx+int(self.nCF/2)] = self.CF_complexes[j*2].step(dt, epsAgon)
-            self.cf_output[startIdx+int(self.nCF/2):startIdx+int(self.nCF)]  = self.CF_complexes[j*2+1].step(dt, epsAAgon)
+            self.cf_output[startIdx:startIdx+int(self.nCF/2)] = self.CF_complexes[j*2].step(
+                dt, sigError[j] if positive else 0.0, allow_trigger=positive)
+            self.cf_output[startIdx+int(self.nCF/2):startIdx+int(self.nCF)]  = self.CF_complexes[j*2+1].step(
+                dt, 0.0 if positive else -sigError[j], allow_trigger=not positive)
 
     def update_pf_pc_weights(self, pf_pc_wts, pf_spike_idx, cf_spike_idx, current_t, history):
         """

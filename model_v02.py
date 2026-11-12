@@ -482,7 +482,10 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     n_dof      = exp.nDof 
     # instantiate limb, motor control unit, brain    
     package_dirs = ["./"] 
-    arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs, disp=showOutput)
+    # the s1 spring exists to carry gravity, so it's off when gravity is (otherwise it would be an unopposed load)
+    spring      = exp.s1_spring_torque if exp.s1_spring_torque is not None else baxter_reduced.DEFAULT_S1_SPRING_TORQUE
+    arm         = baxter_reduced("baxter_description/urdf/baxter_fixed.urdf", package_dirs, disp=showOutput,
+                                 s1_spring_torque=spring if grav else 0.0)
 
     # load desired trajectory
     # for smoothest trajectories, the trajectory should have analytically determined 
@@ -505,7 +508,14 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     mfQMax  = np.array(ranges.get("mf_position_max", arm.qSuppMax))
     mfQdMin = np.array(ranges.get("mf_velocity_min", arm.qdSuppMin))
     mfQdMax = np.array(ranges.get("mf_velocity_max", arm.qdSuppMax))
-    brain           = gb.cerebellum(mfQMin, mfQdMin, mfQMax, mfQdMax, n_dof=arm.njoints)
+    # measured velocity has its own MF range; a sidecar that sets only mf_velocity_* uses it for both
+    # (true of the eight and target-reaching launch files), otherwise the arm's circle defaults apply
+    mfQdCurMin = np.array(ranges.get("mf_current_velocity_min",
+                                     ranges.get("mf_velocity_min", arm.qdCurSuppMin)))
+    mfQdCurMax = np.array(ranges.get("mf_current_velocity_max",
+                                     ranges.get("mf_velocity_max", arm.qdCurSuppMax)))
+    brain           = gb.cerebellum(mfQMin, mfQdMin, mfQMax, mfQdMax, n_dof=arm.njoints,
+                                    qdCurMins=mfQdCurMin, qdCurMaxs=mfQdCurMax)
 
     desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
     traj_w_error        = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)

@@ -6,4 +6,5 @@
 **/results/brain_weights/*
 **/results/graphs/*
 **/results/videos/*
+**/results/dcn_sweep/*
 build/
