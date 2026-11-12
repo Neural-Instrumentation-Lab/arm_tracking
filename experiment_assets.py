@@ -61,13 +61,41 @@ class Experiment:
         return problems
 
 
+# dcn_sweep.py arguments a SweepExperiment can't set: they're its own fields, or not a run
+_SWEEP_OWNED_ARGS = ("-e", "--experiment", "--name", "--list", "--plot_only", "--dry_run", "--hide_output")
+
+
+@dataclass(frozen=True)
+class SweepExperiment:
+    """
+    A BMI sweep that runs through dcn_sweep.py: one training run per combination of BMI settings, on
+    the brain, trajectory and initialWts of the experiment named by base. args are the dcn_sweep.py
+    arguments, exactly as on its command line (see `python dcn_sweep.py --help` and `--list`), e.g.
+        args=("--bmi", "cross_cluster", "--sweep", "right_prob", "--repeats", "3")
+    Results go to results/dcn_sweep/<name>/.
+    """
+    name: str                # short, unique, CLI-friendly id
+    description: str         # one-line human explanation, shown in --list
+    base: str                # name of the Experiment the sweep trains on
+    args: tuple[str, ...] = ()   # dcn_sweep.py arguments
+
+    def __post_init__(self):
+        if isinstance(self.args, str):
+            raise TypeError(f"SweepExperiment '{self.name}': args must be a tuple of strings, not one string")
+        owned = [a for a in self.args if a.split("=")[0] in _SWEEP_OWNED_ARGS]
+        if owned:
+            raise ValueError(f"SweepExperiment '{self.name}': {owned} can't go in args "
+                             f"(the base experiment is the 'base' field; runExperiment.py sets the rest)")
+
+
 def build_dependencies(to_run: list[Experiment], all_experiments: dict[str, Experiment]) -> dict[str, set[str]]:
     """Map each experiment name -> names of experiments whose results it needs
     first, inferred by matching initialWts against another experiment's
     results path. Only creates an edge if the file doesn't already exist on
     disk — if it's already there, there's no ordering requirement."""
     producer_by_results = {
-        exp.finalWts: exp.name for exp in all_experiments.values() if exp.finalWts is not None
+        exp.finalWts: exp.name for exp in all_experiments.values()
+        if isinstance(exp, Experiment) and exp.finalWts is not None
     }
     deps: dict[str, set[str]] = {}
     for exp in to_run:

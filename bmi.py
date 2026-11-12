@@ -24,7 +24,41 @@ import numpy as np
 LEGACY_DT = 2e-3
 
 
+# what the BMI does with each DCN, see BMI.dcn_roles(); used to colour the DCN plots
+DCN_ROLES = ("right", "wrong", "both", "unread")
+
+
 class BMIError(Exception): pass
+
+
+class ProbabilityError(BMIError):
+    """A BMI's probabilities don't add up to 1 (dcn_sweep.py skips those combinations)."""
+
+
+def resolve_probs(probs):
+    """
+    probs: {name: probability or None}, which must add up to 1. Any one can be None and is then
+    1 minus the others. Returns the filled-in dict.
+    """
+    names = ", ".join(probs)
+    missing = [n for n, v in probs.items() if v is None]
+    if len(missing) > 1:
+        given = [n for n in probs if n not in missing]
+        raise BMIError(f"give at least {len(probs) - 1} of {names} (the last is 1 minus the others); "
+                       f"got {', '.join(given) or 'none'}")
+    probs = {n: None if v is None else float(v) for n, v in probs.items()}
+    for n, v in probs.items():
+        if v is not None and not 0 <= v <= 1:
+            raise BMIError(f"{n} must be between 0 and 1 (got {v:g})")
+    total = sum(v for v in probs.values() if v is not None)
+    shown = ", ".join(f"{n}={v:g}" for n, v in probs.items() if v is not None)
+    if missing:
+        if total > 1 + 1e-9:
+            raise ProbabilityError(f"{shown} add up to {total:g}, more than 1, leaving nothing for {missing[0]}")
+        probs[missing[0]] = max(1 - total, 0.0)
+    elif abs(total - 1) > 1e-9:
+        raise ProbabilityError(f"{names} must add up to 1 ({shown} add up to {total:g})")
+    return probs
 
 
 class BMI:
@@ -46,6 +80,15 @@ class BMI:
     def group_counts(self, groups):
         """groups: bool array (2*nJoints, nDCN/2). Returns the spike count of each group."""
         raise NotImplementedError
+
+    def dcn_roles(self):
+        """
+        How the BMI reads each DCN, as an index into DCN_ROLES, laid out like dcnOut (and like the
+        PCs, since PC i inhibits DCN i): read only as its own muscle ("right"), only as another
+        muscle ("wrong"), as both, or not at all ("unread"). Call after setup(). None for BMIs that
+        read every DCN as its own muscle.
+        """
+        return None
 
     def decode(self, dcnOut):
         """DCN spikes from one brain tick -> torque command, shape (nJoints,)."""
@@ -149,33 +192,246 @@ class ClusterBMI(BMI):
         return f"ClusterBMI(cluster_size={self.cluster_size})"
 
 
-def _whole(value, name):
-    if float(value) != int(value):
-        raise BMIError(f"{name} values must be whole numbers of DCNs (got {value})")
-    return int(value)
+class CrossClusterBMI(BMI):
+    """
+    Like ClusterBMI, but a cluster can pick up DCNs from other muscles (the 2*nJoints
+    agonist/antagonist groups). Each cluster slot is still read from the same DCN position, but
+    with probability right_prob that DCN belongs to the cluster's own muscle; otherwise it belongs
+    to one of the other muscles, chosen uniformly. So right_prob = 1 is ClusterBMI and
+    right_prob = 1 / (2*nJoints) (0.25 with 2 joints) is a cluster of DCNs from random muscles.
+    The wiring is drawn once in setup() and fixed for the run.
+    """
+
+    def __init__(self, cluster_size, right_prob, seed=None):
+        self.cluster_size = int(cluster_size)
+        self.right_prob = float(right_prob)
+        self.seed = seed
+
+    def setup(self, brain):
+        super().setup(brain)
+        if not 1 <= self.cluster_size <= self.nPerGroup:
+            raise BMIError(f"cluster_size must be between 1 and {self.nPerGroup} (got {self.cluster_size})")
+        if not 0 <= self.right_prob <= 1:
+            raise BMIError(f"right_prob must be between 0 and 1 (got {self.right_prob})")
+        self.starts = np.arange(0, self.nPerGroup, self.cluster_size)
+        nGroups = self.nJoints * 2
+        rng = np.random.default_rng(self.seed)
+        own = np.arange(nGroups)[:, None]
+        # wrong muscle: an offset of 1..nGroups-1 from the right one, so every other muscle is equally likely
+        wrong = (own + rng.integers(1, nGroups, size=(nGroups, self.nPerGroup))) % nGroups
+        right = rng.random((nGroups, self.nPerGroup)) < self._dcn_right_prob()
+        self.source = np.where(right, own, wrong)                # muscle each slot reads from
+        self.slot = np.broadcast_to(np.arange(self.nPerGroup), self.source.shape)
+        return self
+
+    def dcn_roles(self):
+        n_groups = self.nJoints * 2
+        own = np.arange(n_groups)[:, None]
+        reads_dcn = ~getattr(self, "noise", np.zeros(self.source.shape, dtype=bool))   # random-neuron slots read no DCN
+        right = np.zeros((n_groups, self.nPerGroup), dtype=bool)
+        wrong = np.zeros_like(right)
+        is_right = reads_dcn & (self.source == own)
+        is_wrong = reads_dcn & (self.source != own)
+        right[self.source[is_right], self.slot[is_right]] = True
+        wrong[self.source[is_wrong], self.slot[is_wrong]] = True
+        roles = np.full(right.shape, DCN_ROLES.index("unread"))
+        roles[right] = DCN_ROLES.index("right")
+        roles[wrong] = DCN_ROLES.index("wrong")
+        roles[right & wrong] = DCN_ROLES.index("both")
+        return roles.ravel()
+
+    def _dcn_right_prob(self):
+        """Chance a slot that reads a DCN reads one of its own muscle."""
+        return self.right_prob
+
+    def read(self, groups):
+        """What each cluster slot sees this tick: (2*nJoints, nDCN/2) bool, laid out like groups."""
+        return groups[self.source, self.slot]
+
+    def group_counts(self, groups):
+        active = np.logical_or.reduceat(self.read(groups), self.starts, axis=1)
+        return active.sum(axis=1) * (self.nPerGroup / len(self.starts))
+
+    def __repr__(self):
+        return (f"CrossClusterBMI(cluster_size={self.cluster_size}, "
+                f"right_prob={self.right_prob}, seed={self.seed})")
 
 
-def _make_num_drop(value, seed):
-    return DroppedDCNBMI(_whole(value, "num_drop"), seed=seed)
+class NoisyCrossClusterBMI(CrossClusterBMI):
+    """
+    Like CrossClusterBMI, but some cluster slots pick up a random neuron instead of a DCN. Each slot
+    is a DCN of the cluster's own muscle with probability right_prob, a DCN of another muscle (chosen
+    uniformly) with probability cross_prob, or a random neuron with probability noise_prob. The three
+    must add up to 1: give any two and the third is 1 minus their sum, or give all three. A random
+    neuron fires independently every tick with probability noise_rate * dt, so on average at
+    noise_rate Hz (at most 1/dt, e.g. 500 Hz at dt = 2 ms). Untrained DCNs fire at about 500 Hz and
+    trained ones a few hundred Hz less. The wiring is drawn once in setup() and fixed for the run.
+    """
+
+    def __init__(self, cluster_size, noise_rate, right_prob=None, cross_prob=None, noise_prob=None, seed=None):
+        probs = resolve_probs({"right_prob": right_prob, "cross_prob": cross_prob, "noise_prob": noise_prob})
+        super().__init__(cluster_size, probs["right_prob"], seed=seed)
+        self.cross_prob = probs["cross_prob"]
+        self.noise_prob = probs["noise_prob"]
+        self.noise_rate = float(noise_rate)
+
+    def _dcn_right_prob(self):
+        # the noise slots are drawn separately, so among the DCN slots right : cross keeps its ratio
+        dcn = self.right_prob + self.cross_prob
+        return self.right_prob / dcn if dcn > 0 else 1.0
+
+    def setup(self, brain):
+        super().setup(brain)
+        if not 0 <= self.noise_rate * self.dt <= 1:
+            raise BMIError(f"noise_rate must be between 0 and {1 / self.dt:g} Hz at dt={self.dt:g} s "
+                           f"(got {self.noise_rate:g})")
+        # own stream, so the noise doesn't reuse the random numbers that drew the DCN wiring
+        self.noise_rng = np.random.default_rng(None if self.seed is None else [self.seed, 1])
+        self.noise = self.noise_rng.random(self.source.shape) < self.noise_prob   # slots that are random neurons
+        self.spike_prob = self.noise_rate * self.dt
+        return self
+
+    def read(self, groups):
+        seen = super().read(groups)
+        if not self.noise.any():
+            return seen
+        spikes = self.noise_rng.random(seen.shape) < self.spike_prob
+        return np.where(self.noise, spikes, seen)
+
+    def __repr__(self):
+        return (f"NoisyCrossClusterBMI(cluster_size={self.cluster_size}, noise_rate={self.noise_rate:g}, "
+                f"right_prob={self.right_prob:g}, cross_prob={self.cross_prob:g}, "
+                f"noise_prob={self.noise_prob:g}, seed={self.seed})")
 
 
-def _make_cluster(value, seed):
-    return ClusterBMI(_whole(value, "cluster"))
+class NoisyClusterBMI(NoisyCrossClusterBMI):
+    """
+    Like ClusterBMI, but some cluster slots pick up a random neuron instead of a DCN: each slot is a
+    DCN of the cluster's own muscle with probability right_prob, or a random neuron with probability
+    noise_prob. The two must add up to 1: give either one, or both. A random neuron fires
+    independently every tick with probability noise_rate * dt, so on average at noise_rate Hz (at
+    most 1/dt, e.g. 500 Hz at dt = 2 ms). Untrained DCNs fire at about 500 Hz and trained ones a few
+    hundred Hz less. noise_prob = 0 is ClusterBMI.
+    """
+
+    def __init__(self, cluster_size, noise_rate, right_prob=None, noise_prob=None, seed=None):
+        probs = resolve_probs({"right_prob": right_prob, "noise_prob": noise_prob})
+        super().__init__(cluster_size, noise_rate, cross_prob=0, seed=seed, **probs)
+
+    def __repr__(self):
+        return (f"NoisyClusterBMI(cluster_size={self.cluster_size}, noise_rate={self.noise_rate:g}, "
+                f"right_prob={self.right_prob:g}, noise_prob={self.noise_prob:g}, seed={self.seed})")
+
+
+class NoisyMixBMI(NoisyCrossClusterBMI):
+    """
+    Records one neuron per DCN slot of each muscle (the 2*nJoints agonist/antagonist groups, 4 with 2
+    joints), but some of those neurons are the wrong one. Each recorded neuron is a DCN of its own
+    muscle with probability right_prob, a DCN of another muscle (chosen uniformly) with probability
+    cross_prob, or a random neuron with probability noise_prob. The three must add up to 1: give any
+    two and the third is 1 minus their sum, or give all three. Unlike the cluster BMIs every neuron
+    counts on its own, so a muscle's count is how many of its recorded neurons spiked (like FullBMI,
+    which is right_prob = 1). A random neuron fires independently every tick with probability
+    noise_rate * dt, so on average at noise_rate Hz (at most 1/dt, e.g. 500 Hz at dt = 2 ms).
+    Untrained DCNs fire at about 500 Hz and trained ones a few hundred Hz less. The wiring is drawn
+    once in setup() and fixed for the run.
+    """
+
+    def __init__(self, noise_rate, right_prob=None, cross_prob=None, noise_prob=None, seed=None):
+        super().__init__(1, noise_rate, right_prob=right_prob, cross_prob=cross_prob,
+                         noise_prob=noise_prob, seed=seed)
+
+    def __repr__(self):
+        return (f"NoisyMixBMI(noise_rate={self.noise_rate:g}, right_prob={self.right_prob:g}, "
+                f"cross_prob={self.cross_prob:g}, noise_prob={self.noise_prob:g}, seed={self.seed})")
+
+
+@dataclass(frozen=True)
+class SweepParam:
+    """One setting of a BMI that dcn_sweep.py can vary."""
+    default: float | None      # value used when this setting isn't swept (None: worked out by the BMI)
+    values: tuple              # values swept by default
+    label: str                 # what a value means, used on the plots
+    whole: bool = False        # must be a whole number (e.g. a count of DCNs)
 
 
 @dataclass(frozen=True)
 class BMISweep:
-    """How dcn_sweep.py varies one kind of BMI. Add an entry to BMI_SWEEPS to make a new BMI sweepable."""
-    make: Callable             # (value, seed) -> BMI
-    values: tuple              # values swept by default
-    label: str                 # what a value means, used on the plots
+    """
+    How dcn_sweep.py builds one kind of BMI. Add an entry to BMI_SWEEPS to make a new BMI sweepable:
+    make(seed, **settings) returns the BMI, and params names each setting it takes. The first
+    entry of params is the one swept when dcn_sweep.py isn't told which to sweep.
 
+    linked lists groups of settings that depend on each other, like probabilities that must add up
+    to 1: as soon as any setting of a group is set or swept, the others drop their defaults (they
+    become None, for the BMI to work out), so a default never silently fills in one of them.
+
+    The BMI must store each setting as an attribute of the same name: dcn_sweep.py reads them back
+    so its results show the values the BMI actually used (e.g. a probability it worked out).
+    """
+    make: Callable             # (seed, **settings) -> BMI
+    params: dict               # setting name -> SweepParam
+    linked: tuple = ()         # tuples of setting names, see above
+
+    def build(self, seed, **settings):
+        """The BMI for these settings; settings left out use their defaults."""
+        unknown = set(settings) - set(self.params)
+        if unknown:
+            raise BMIError(f"unknown setting(s) {sorted(unknown)}; this BMI takes {list(self.params)}")
+        full = {}
+        for name, param in self.params.items():
+            value = settings.get(name, param.default)
+            if param.whole and value is not None:
+                if float(value) != int(value):
+                    raise BMIError(f"{name} must be a whole number (got {value})")
+                value = int(value)
+            full[name] = value
+        return self.make(seed, **full)
+
+
+_N_PER_GROUP = "(of 50 per agonist/antagonist group)"
+_NOISE_PROB = SweepParam(0.25, (0, 0.1, 0.25, 0.5, 0.75, 0.9, 1), "Probability a cluster slot is a random neuron")
+_CLUSTER_SIZE = SweepParam(10, (1, 2, 5, 10, 25, 50), f"DCNs per cluster {_N_PER_GROUP}", whole=True)
+_NOISE_RATE = SweepParam(100, (0, 10, 50, 100, 200, 350, 500), "Firing rate of the random neurons (Hz)")
 
 BMI_SWEEPS = {
-    "num_drop": BMISweep(_make_num_drop, (0, 20, 30, 40, 45, 48, 49),
-                         "DCNs dropped per agonist/antagonist group (of 50)"),
-    "spike_drop": BMISweep(SpikeDropBMI, (0, 0.25, 0.5, 0.75, 0.9, 0.95, 0.98),
-                           "Probability of dropping each DCN spike"),
-    "cluster": BMISweep(_make_cluster, (1, 2, 5, 10, 25, 50),
-                        "DCNs per cluster (of 50 per agonist/antagonist group)"),
+    "num_drop": BMISweep(
+        lambda seed, n_drop: DroppedDCNBMI(n_drop, seed=seed),
+        {"n_drop": SweepParam(0, (0, 20, 30, 40, 45, 48, 49), f"DCNs dropped per group {_N_PER_GROUP}", whole=True)}),
+    "spike_drop": BMISweep(
+        lambda seed, drop_prob: SpikeDropBMI(drop_prob, seed=seed),
+        {"drop_prob": SweepParam(0, (0, 0.25, 0.5, 0.75, 0.9, 0.95, 0.98), "Probability of dropping each DCN spike")}),
+    "cluster": BMISweep(
+        lambda seed, cluster_size: ClusterBMI(cluster_size),
+        {"cluster_size": SweepParam(1, (1, 2, 5, 10, 25, 50), f"DCNs per cluster {_N_PER_GROUP}", whole=True)}),
+    "cross_cluster": BMISweep(
+        lambda seed, right_prob, cluster_size: CrossClusterBMI(cluster_size, right_prob, seed=seed),
+        {"right_prob": SweepParam(1, (0.25, 0.5, 0.75, 0.9, 1), "Probability a clustered DCN is from the right muscle"),
+         "cluster_size": SweepParam(10, (1, 2, 5, 10, 25, 50), f"DCNs per cluster {_N_PER_GROUP}", whole=True)}),
+    "noisy_cluster": BMISweep(
+        lambda seed, noise_prob, noise_rate, right_prob, cluster_size:
+            NoisyClusterBMI(cluster_size, noise_rate, right_prob=right_prob, noise_prob=noise_prob, seed=seed),
+        {"noise_prob": SweepParam(0.25, _NOISE_PROB.values, _NOISE_PROB.label),
+         "noise_rate": _NOISE_RATE,
+         "right_prob": SweepParam(None, (0, 0.25, 0.5, 0.75, 0.9, 1), "Probability a cluster slot is a DCN of the right muscle"),
+         "cluster_size": _CLUSTER_SIZE},
+        linked=(("right_prob", "noise_prob"),)),
+    "noisy_cross_cluster": BMISweep(
+        lambda seed, noise_rate, right_prob, cross_prob, noise_prob, cluster_size:
+            NoisyCrossClusterBMI(cluster_size, noise_rate, right_prob=right_prob, cross_prob=cross_prob,
+                                 noise_prob=noise_prob, seed=seed),
+        {"noise_rate": _NOISE_RATE,
+         "right_prob": SweepParam(0.5, (0, 0.25, 0.5, 0.75, 0.9, 1), "Probability a cluster slot is a DCN of the right muscle"),
+         "cross_prob": SweepParam(None, (0, 0.1, 0.25, 0.5, 0.75, 1), "Probability a cluster slot is a DCN of another muscle"),
+         "noise_prob": SweepParam(0.25, _NOISE_PROB.values, _NOISE_PROB.label),
+         "cluster_size": _CLUSTER_SIZE},
+        linked=(("right_prob", "cross_prob", "noise_prob"),)),
+    "noisy_mix": BMISweep(
+        lambda seed, noise_rate, right_prob, cross_prob, noise_prob:
+            NoisyMixBMI(noise_rate, right_prob=right_prob, cross_prob=cross_prob, noise_prob=noise_prob, seed=seed),
+        {"noise_rate": _NOISE_RATE,
+         "right_prob": SweepParam(0.5, (0, 0.25, 0.5, 0.75, 0.9, 1), "Probability a recorded neuron is a DCN of the right muscle"),
+         "cross_prob": SweepParam(None, (0, 0.1, 0.25, 0.5, 0.75, 1), "Probability a recorded neuron is a DCN of another muscle"),
+         "noise_prob": SweepParam(0.25, _NOISE_PROB.values, "Probability a recorded neuron is a random neuron")},
+        linked=(("right_prob", "cross_prob", "noise_prob"),)),
 }

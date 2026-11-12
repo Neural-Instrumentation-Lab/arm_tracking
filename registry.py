@@ -1,6 +1,6 @@
 from pathlib import Path
-from experiment_assets import Experiment
-from bmi import DroppedDCNBMI
+from experiment_assets import Experiment, SweepExperiment
+from bmi import DroppedDCNBMI, CrossClusterBMI
 
 # --- Central, self-documenting registry ------------------------------------
 # This replaces the "type 3 for experiment 3" problem: every experiment has
@@ -12,7 +12,10 @@ WTS   = Path("results/brain_weights")
 GRAPH = Path("results/graphs")
 VIDEO = Path("results/videos")
 
-EXPERIMENTS: dict[str, Experiment] = {
+# Experiment: one training run. SweepExperiment: a BMI sweep (many runs) through dcn_sweep.py,
+# trained on a base Experiment. Both run with: python runExperiment.py -e <name>
+
+EXPERIMENTS: dict[str, Experiment | SweepExperiment] = {
     e.name: e
     for e in [
         Experiment(
@@ -72,6 +75,20 @@ EXPERIMENTS: dict[str, Experiment] = {
             brain_timestep=0.5e-3,
         ),
         Experiment(
+            name="tiny_dt_brain",
+            description="test really ssmall timestep to make sure neuron sim is working",
+            trajectory=TRAJS / "tiny_timestep.csv",
+            results=RESUL / "tiny_dt_brain.pkl",
+            finalWts=WTS / "tiny_dt_brain.npz",
+            graphs=GRAPH / "tiny_dt_brain.png",
+            videos=VIDEO / "tiny_dt_brain.mp4",
+            nDof=2,
+            nTrials=200,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=0.1e-3,
+        ),
+        Experiment(
             name="complex_periodic",
             description="joystick on a figure 8 with harmonics, harder than the circle",
             trajectory=TRAJS / "complex_periodic.csv",
@@ -80,7 +97,7 @@ EXPERIMENTS: dict[str, Experiment] = {
             graphs=GRAPH / "complex_periodic.png",
             videos=VIDEO / "complex_periodic.mp4",
             nDof=2,
-            nTrials=200,
+            nTrials=100,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
@@ -131,5 +148,84 @@ EXPERIMENTS: dict[str, Experiment] = {
             bmi=DroppedDCNBMI(n_drop=45, seed=0),
             initialWts=WTS / "complex_periodic.npz",
         ),
+        Experiment(
+            name="cross_cluster_complex",
+            description="cross cluster bmi on pretrained complex periodic",
+            trajectory=TRAJS / "complex_periodic.csv",
+            results=RESUL / "cross_cluster_complex.pkl",
+            finalWts=WTS / "cross_cluster_complex.npz",
+            graphs=GRAPH / "cross_cluster_complex.png",
+            videos=VIDEO / "cross_cluster_complex.mp4",
+            nDof=2,
+            nTrials=500,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=2e-3,
+            bmi=CrossClusterBMI(cluster_size=1, right_prob=0.5, seed=0),
+            initialWts=WTS / "complex_periodic.npz",
+        ),
+        Experiment(
+            name="joystick_cross_cluster",
+            description="joystick circle, BMI reads clusters of 5 DCNs where each DCN is only 75% likely to be from the right muscle",
+            trajectory=TRAJS / "joystick.csv",
+            results=RESUL / "joystick_cross_cluster.pkl",
+            finalWts=WTS / "joystick_cross_cluster.npz",
+            graphs=GRAPH / "joystick_cross_cluster.png",
+            videos=VIDEO / "joystick_cross_cluster.mp4",
+            nDof=2,
+            nTrials=200,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=2e-3,
+            bmi=CrossClusterBMI(cluster_size=5, right_prob=0.75, seed=0),
+        ),
+
+        # --- BMI sweeps (args are dcn_sweep.py's; see python dcn_sweep.py --help / --list) ---
+        SweepExperiment(
+            name="sweep_num_drop",
+            description="joystick circle: final MAE vs how many DCNs per group the BMI loses",
+            base="joystick",
+            args=("--bmi", "num_drop"),
+        ),
+        SweepExperiment(
+            name="sweep_cross_cluster",
+            description="joystick circle: clusters of 10 DCNs, vs the chance each DCN is from the right muscle",
+            base="joystick",
+            args=("--bmi", "cross_cluster", "--sweep", "right_prob", "--set", "cluster_size=10"),
+        ),
+        SweepExperiment(
+            name="sweep_cross_cluster_grid",
+            description="joystick circle: every cluster size x right-muscle chance (csv only, no plots)",
+            base="joystick",
+            args=("--bmi", "cross_cluster", "--sweep", "right_prob", "cluster_size"),
+        ),
+        SweepExperiment(
+            name="sweep_noisy_cluster",
+            description="joystick circle: clusters of 10 with 100 Hz random neurons mixed in, vs the chance a slot is random",
+            base="joystick",
+            args=("--bmi", "noisy_cluster", "--sweep", "noise_prob"),
+        ),
+        SweepExperiment(
+            name="sweep_noisy_cross_cluster_grid",
+            description="joystick circle: random-neuron chance x rate, 10% of slots cross-muscle DCNs, the rest right (csv only)",
+            base="joystick",
+            args=("--bmi", "noisy_cross_cluster", "--sweep", "noise_prob", "noise_rate", "--set", "cross_prob=0.1"),
+        ),
+        SweepExperiment(
+            name="sweep_noisy_cross_cluster_mix",
+            description="joystick circle: every right / random-neuron mix that adds up to 1 or less, the rest cross-muscle (csv only)",
+            base="joystick",
+            args=("--bmi", "noisy_cross_cluster", "--sweep", "right_prob", "noise_prob"),
+        ),
+        SweepExperiment(
+            name="sweep_noisy_mix",
+            description="joystick circle, unclustered: every right / random-neuron mix that adds up to 1 or less, the rest cross-muscle (csv only)",
+            base="joystick",
+            args=("--bmi", "noisy_mix", "--sweep", "right_prob", "noise_prob"),
+        ),
     ]
 }
+
+for _exp in EXPERIMENTS.values():   # catch typos in a sweep's base when the registry loads
+    if isinstance(_exp, SweepExperiment) and not isinstance(EXPERIMENTS.get(_exp.base), Experiment):
+        raise ValueError(f"SweepExperiment '{_exp.name}': base '{_exp.base}' is not an Experiment in the registry")

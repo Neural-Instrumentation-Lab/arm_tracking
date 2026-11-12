@@ -2,11 +2,17 @@
 Experiment runner
 
 Usage:
-    python experiment_runner.py --list
-    python experiment_runner.py --experiment baseline_v1
-    python experiment_runner.py --experiment baseline_v1 --dry-run
+    python runExperiment.py --list
+    python runExperiment.py --experiment joystick
+    python runExperiment.py --experiment joystick --dry-run
 
-Add a new experiment by adding one Experiment(...) entry to EXPERIMENTS below.
+BMI sweeps (SweepExperiment entries) run through dcn_sweep.py:
+    python runExperiment.py -e sweep_cross_cluster                  # run the sweep
+    python runExperiment.py -e sweep_cross_cluster --dry-run        # check it, list the runs
+    python runExperiment.py -e sweep_cross_cluster --view           # re-plot its saved results
+    python runExperiment.py -e sweep_cross_cluster -- --repeats 3   # args after -- are added to dcn_sweep's
+
+Add a new experiment by adding one Experiment(...) or SweepExperiment(...) entry to EXPERIMENTS in registry.py.
 """
 
 from __future__ import annotations
@@ -19,18 +25,62 @@ from registry import EXPERIMENTS
 import model_v02
 import play_arm_path
 import matplotlib.pyplot as plt
-from experiment_assets import build_dependencies
+from experiment_assets import build_dependencies, SweepExperiment
+import dcn_sweep
 from bmi import DroppedDCNBMI, SpikeDropBMI, ClusterBMI
 
 def print_list() -> None:
     width = max(len(name) for name in EXPERIMENTS) + 2
     print("Available experiments:\n")
     for exp in EXPERIMENTS.values():
-        print(f"  {exp.name:<{width}} {exp.description}")
+        kind = "[sweep] " if isinstance(exp, SweepExperiment) else ""
+        print(f"  {exp.name:<{width}} {kind}{exp.description}")
     print(f"\nRun one with: python {Path(__file__).name} --experiment <name>")
 
+def check_runnable(exp) -> bool:
+    """Print why exp can't run (missing files, experiments to run first). True if it can."""
+    problems = exp.validate()
+    if not problems:
+        return True
+    deps = build_dependencies([exp], EXPERIMENTS)[exp.name]
+    if deps:
+        print(f"dependency issue. Run the following experiments with --save to produce the required dependencies: {sorted(deps)}")
+    print(f"Cannot run '{exp.name}':")
+    for p in problems:
+        print(f"  - {p}")
+    return False
+
+
+def run_sweep(exp: SweepExperiment, args, extra: list[str], parser) -> None:
+    """Run a registry sweep through dcn_sweep.py, with its base experiment and args."""
+    unsupported = [flag for flag, used in (
+        ("--drop_dcn", args.drop_dcn is not None), ("--drop_spike", args.drop_spike is not None),
+        ("--cluster_dcn", args.cluster_dcn is not None), ("--makeMovie", args.makeMovie is not None),
+        ("--no_grav", args.no_grav)) if used]
+    if unsupported:
+        parser.error(f"'{exp.name}' is a BMI sweep, so {', '.join(unsupported)} don't apply "
+                     f"(BMI settings go in its args in registry.py, or after --)")
+    try:
+        exp = dataclasses.replace(exp, args=exp.args + tuple(extra))   # re-checks the args
+    except ValueError as e:
+        parser.error(str(e))
+    if not args.view and not check_runnable(EXPERIMENTS[exp.base]):
+        sys.exit(1)
+    argv = ["-e", exp.base, "--name", exp.name, *exp.args]
+    if args.noReset:
+        argv.append("--noReset")
+    if args.hide_output:
+        argv.append("--hide_output")
+    if args.dry_run:
+        argv.append("--dry_run")
+    if args.view:
+        argv.append("--plot_only")
+    print(f"'{exp.name}': python dcn_sweep.py {' '.join(argv)}")
+    dcn_sweep.main(argv)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--experiment", "-e",
         choices=sorted(EXPERIMENTS),   # argparse validates + shows valid names on error
@@ -80,13 +130,21 @@ def main() -> None:
         help="Don't reset the arm to a random start point each trial; trials run back to back"
     )
 
-    args = parser.parse_args()
+    # anything after a bare -- is passed on to dcn_sweep.py (sweep experiments only)
+    argv = sys.argv[1:]
+    extra = argv[argv.index("--") + 1:] if "--" in argv else []
+    args = parser.parse_args(argv[:argv.index("--")] if "--" in argv else argv)
 
     if args.list or not args.experiment:
         print_list()
         sys.exit(0 if args.list else 1)
 
     exp = EXPERIMENTS[args.experiment]
+    if isinstance(exp, SweepExperiment):
+        run_sweep(exp, args, extra, parser)
+        return
+    if extra:
+        parser.error(f"arguments after -- are for BMI sweeps; '{exp.name}' is a single experiment")
     if args.makeMovie is not None and args.makeMovie < 1:
         parser.error("--makeMovie must be at least 1")
     if args.drop_dcn is not None:
@@ -105,14 +163,7 @@ def main() -> None:
         if not 0 <= args.drop_spike < 1:
             parser.error("--drop_spike must be at least 0 and below 1")
         exp = dataclasses.replace(exp, bmi=SpikeDropBMI(args.drop_spike))
-    problems = exp.validate()
-    if problems:
-        deps = build_dependencies([exp], EXPERIMENTS)
-        if exp.validate(assume_produced=deps[exp.name]) is not None:
-            print(f"dependency issue. Run the following experiments with --save to produce the required dependencies: {deps[exp.name]}")
-        print(f"Cannot run '{exp.name}':")
-        for p in problems:
-            print(f"  - {p}")
+    if not check_runnable(exp):
         sys.exit(1)
 
     if args.dry_run:
@@ -147,11 +198,13 @@ def main() -> None:
             plt.imshow(maePlot)
             plt.show()
             # results saved before the raster existed don't have one
-            rasterFile = exp.graphs.with_name(exp.graphs.stem + "_dcn_raster" + exp.graphs.suffix)
-            if rasterFile.exists():
-                plt.axis('off')
-                plt.imshow(plt.imread(rasterFile))
-                plt.show()
+            # results saved before these plots existed don't have them; _dcn_roles only exists for BMIs that misread DCNs
+            for extra in ("_dcn_raster", "_dcn_roles"):
+                extraFile = exp.graphs.with_name(exp.graphs.stem + extra + exp.graphs.suffix)
+                if extraFile.exists():
+                    plt.axis('off')
+                    plt.imshow(plt.imread(extraFile))
+                    plt.show()
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")
