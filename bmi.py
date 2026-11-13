@@ -97,7 +97,8 @@ class BMI:
         torques = counts[0::2] - counts[1::2]          # agonist - antagonist, per joint
         self.prevDCN[:-1] = self.prevDCN[1:]
         self.prevDCN[-1] = torques
-        return self.gain * np.mean(self.prevDCN, axis=0)
+        # the same arithmetic as np.mean(self.prevDCN, axis=0), without its Python-level overhead
+        return self.gain * (np.add.reduce(self.prevDCN, axis=0) / self.prevDCN.shape[0])
 
 
 class FullBMI(BMI):

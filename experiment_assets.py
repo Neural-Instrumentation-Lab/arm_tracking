@@ -9,9 +9,15 @@ from bmi import BMI, FullBMI
 
 
 class brainData:
-    def __init__(self, nTrials, trajLen, nDCNs, nGCs, nPCs):
-        self.dcn     = np.zeros((nTrials, trajLen, nDCNs), dtype=bool)   # DCN spikes are true/false
-        self.pf_pc   = np.zeros((nTrials, nGCs, nPCs)) 
+    def __init__(self, nTrials, nTicks, nDCNs, nGCs, nPCs):
+        """
+        nTicks: most brain ticks in one trial. DCN spikes are only stored on brain ticks (the brain's
+        output doesn't change between them); tick_step[trial, k] is the sim step of the trial where
+        tick k happened, -1 for unused slots (a trial without reset can have one tick fewer).
+        """
+        self.dcn       = np.zeros((nTrials, nTicks, nDCNs), dtype=bool)   # DCN spikes are true/false
+        self.tick_step = np.full((nTrials, nTicks), -1, dtype=np.int64)
+        self.pf_pc     = np.zeros((nTrials, nGCs, nPCs)) 
 
 @dataclass(frozen=True)
 class Experiment:
@@ -241,7 +247,8 @@ Saving/loading brain results.
 
 Stored as a compressed numpy .npz archive:
     pf_pc       - parallel fiber -> Purkinje cell weights after every trial, shape (nTrials, n_pf, n_pc)
-    dcn_packed  - DCN spikes of every step, bit-packed (read them with load_dcn)
+    dcn_packed  - DCN spikes of every brain tick, bit-packed (read them with load_dcn)
+    dcn_tick_step - sim step of each of those ticks, -1 for unused slots (load_dcn returns it too)
 plus an optional YAML sidecar for anything that isn't inferable from the
 arrays themselves (e.g. training notes).
 
@@ -257,7 +264,7 @@ def save_weights(
 
     Args:
         fname: output path, e.g. "results/weights_exp_02.npz"
-        results: brainData from runSimulation (PF-PC weights per trial, DCN spikes per step)
+        results: brainData from runSimulation (PF-PC weights per trial, DCN spikes per brain tick)
         meta: optional dict written to a sidecar fname.yaml (e.g. training notes,
             n_epochs, final_error)
  
@@ -270,7 +277,8 @@ def save_weights(
     # savez_compressed is lossless and shrinks pf_pc a lot, since rows of unvisited GCs never change.
     dcn = np.asarray(results.dcn, dtype=bool)
     np.savez_compressed(fname, pf_pc=np.asarray(results.pf_pc),
-                        dcn_packed=np.packbits(dcn, axis=-1), dcn_n=dcn.shape[-1])
+                        dcn_packed=np.packbits(dcn, axis=-1), dcn_n=dcn.shape[-1],
+                        dcn_tick_step=np.asarray(results.tick_step))
  
     if meta:
         meta_path = fname.with_suffix(".yaml")
@@ -278,12 +286,23 @@ def save_weights(
             yaml.safe_dump(meta, f, sort_keys=False)
  
  
-def load_dcn(fname: str | Path) -> np.ndarray:
-    """DCN spikes saved by save_weights, as a bool array of shape (nTrials, trajLen, nDCNs)."""
+def load_dcn(fname: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """
+    DCN spikes saved by save_weights: (dcn, tick_step).
+        dcn       - bool array (nTrials, nTicks, nDCNs)
+        tick_step - (nTrials, nTicks), the sim step of each row of dcn, -1 for unused slots
+    Files saved before ticks-only storage have a row for every sim step, so tick_step is every step.
+    """
     data = np.load(fname)
     if "dcn" in data:                           # files saved before bit-packing
-        return data["dcn"].astype(bool)
-    return np.unpackbits(data["dcn_packed"], axis=-1, count=int(data["dcn_n"])).astype(bool)
+        dcn = data["dcn"].astype(bool)
+    else:
+        dcn = np.unpackbits(data["dcn_packed"], axis=-1, count=int(data["dcn_n"])).astype(bool)
+    if "dcn_tick_step" in data:
+        tick_step = data["dcn_tick_step"]
+    else:
+        tick_step = np.broadcast_to(np.arange(dcn.shape[1]), dcn.shape[:2]).copy()
+    return dcn, tick_step
 
 
 def load_pf_pc(fname: str | Path) -> np.ndarray:

@@ -499,6 +499,8 @@ class baxter_reduced(dynamic_3dof_arm):
         return q 
 
 class JoystickDotSimulator:
+    POS_LIMIT = 2.0   # the dot stays inside [-POS_LIMIT, POS_LIMIT] on each axis
+
     def __init__(self, max_speed=5.0, initial_pos=(0.0, 0.0)):
         """
         :param max_speed: Maximum units per second the dot can move.
@@ -519,21 +521,16 @@ class JoystickDotSimulator:
         :param dt: Timestep in seconds
         :return: Updated (x, y) position
         """
-        joy_vector = np.array([joy_x, joy_y], dtype=float)
-        magnitude = np.linalg.norm(joy_vector)
-        
-        # Clamp joystick magnitude to max 1.0
-        # if magnitude > 1.0:
-        #     joy_vector = joy_vector / magnitude
-            
-        # Update position: Position = Position + (Joystick * MaxSpeed * dt)
-        self.pos += joy_vector * dt
-        self.pos = np.clip(self.pos, -2, 2)
+        # plain float math: this runs every sim step, and numpy calls on a 2-vector cost far more
+        # than the arithmetic. Position = Position + Joystick * dt, kept inside [-POS_LIMIT, POS_LIMIT]
+        x, y = self.pos.tolist()
+        self.pos[0] = min(self.POS_LIMIT, max(-self.POS_LIMIT, x + joy_x * dt))
+        self.pos[1] = min(self.POS_LIMIT, max(-self.POS_LIMIT, y + joy_y * dt))
         return self.pos.copy()
 
     def move(self, pos, vel=None, acc=None):
-        """sets cursor to a position"""
-        self.pos = pos
+        """sets cursor to a position (copied, since step() updates the position in place)"""
+        self.pos = np.array(pos, dtype=float)
 
     def inverse_kinematics(self, x, y, t):
         """

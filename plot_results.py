@@ -24,15 +24,11 @@ def _present_roles(roles):
     return [(i, name) for i, name in enumerate(DCN_ROLES) if np.any(roles == i)]
 
 
-def _brain_ticks(trial, n_steps, step, reset):
-    """Sim steps of one trial where the brain ticked: runSimulation counts steps since the last reset."""
-    offset = 0 if reset else (-trial * n_steps) % step
-    return np.arange(offset, n_steps, step)
-
-
-def _brain_step(n_steps, time, brain_dt):
-    """Sim steps per brain tick."""
-    return int(round(n_steps / (np.floor(time[-1] / brain_dt) + 1), 0))
+def _trial_ticks(brainResults, trial):
+    """(DCN spikes, sim step) of every brain tick of one trial, from runSimulation's brainResults."""
+    steps = brainResults.tick_step[trial]
+    used = steps >= 0
+    return brainResults.dcn[trial, used], steps[used]
 
 
 def plot_arm_results(final_traj, desired_traj, show=True, save=False, saveLoc=None):
@@ -102,17 +98,14 @@ def plot_brain_results(errorTot, time, brain, show=True, save=False, saveLoc=Non
         plt.show()
     plt.close(fig)
 
-def plot_dcn_raster(brainResults, time, brain, brain_dt, reset=True, show=True, save=False, saveLoc=None, roles=None):
+def plot_dcn_raster(brainResults, time, brain, brain_dt, show=True, save=False, saveLoc=None, roles=None):
     """
     Raster of every DCN's spikes over one whole trial, at the first, middle and final trial.
 
-    brainResults.dcn is recorded every sim step but the brain only updates every brain_dt,
-    so only the steps where the brain ticked are plotted (same timing as runSimulation).
+    brainResults.dcn holds the spikes of every brain tick, and tick_step the sim step of each.
     roles (from bmi.dcn_roles(), optional) colours each DCN by how the BMI reads it.
     """
-    dcn = brainResults.dcn
-    n_trials, n_steps, n_dcn = dcn.shape
-    step = _brain_step(n_steps, time, brain_dt)
+    n_trials, _, n_dcn = brainResults.dcn.shape
     trials = sorted({0, n_trials // 2, n_trials - 1})
 
     fig, axs = plt.subplots(len(trials), 1, sharex=True, sharey=True, squeeze=False,
@@ -120,9 +113,7 @@ def plot_dcn_raster(brainResults, time, brain, brain_dt, reset=True, show=True, 
     n_groups = brain.nJoints * 2
     per_group = n_dcn // n_groups
     for ax, trial in zip(axs[:, 0], trials):
-        # brain-tick steps of this trial: runSimulation counts steps since the last reset
-        ticks = _brain_ticks(trial, n_steps, step, reset)
-        spikes = dcn[trial, ticks]
+        spikes, ticks = _trial_ticks(brainResults, trial)
         t_idx, neuron = np.nonzero(spikes)
         rate = spikes.sum() / (n_dcn * len(ticks) * brain_dt)
         title = f"Trial {trial + 1} of {n_trials}   (mean rate {rate:.1f} Hz"
@@ -162,19 +153,17 @@ def plot_dcn_raster(brainResults, time, brain, brain_dt, reset=True, show=True, 
     plt.close(fig)
 
 
-def plot_dcn_roles(brainResults, time, brain_dt, roles, reset=True, show=True, save=False, saveLoc=None):
+def plot_dcn_roles(brainResults, time, brain_dt, roles, show=True, save=False, saveLoc=None):
     """
     Whether the brain learns to quiet the DCNs the BMI misreads: per trial, the mean firing rate of
     the DCNs in each role (bmi.dcn_roles()), and the mean PF-PC weight onto the PCs that inhibit
     them (higher weight -> more PC firing -> more inhibition of that DCN).
     """
-    dcn = brainResults.dcn
-    n_trials, n_steps, _ = dcn.shape
-    step = _brain_step(n_steps, time, brain_dt)
+    n_trials = brainResults.dcn.shape[0]
     present = _present_roles(roles)
     rates = np.zeros((len(present), n_trials))
     for trial in range(n_trials):
-        spikes = dcn[trial, _brain_ticks(trial, n_steps, step, reset)]
+        spikes, _ = _trial_ticks(brainResults, trial)
         for k, (i, _) in enumerate(present):
             rates[k, trial] = spikes[:, roles == i].mean() / brain_dt
     wts = np.array([[brainResults.pf_pc[:, :, roles == i].mean(axis=(1, 2))] for i, _ in present])[:, 0]

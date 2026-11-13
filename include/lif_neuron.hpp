@@ -164,12 +164,15 @@ public:
             // mean conductances over the tick
             double gA = g_AMPA[i] * mean_ampa_;
             if (ampa_tonic) gA = gA + ampa_tonic[i];
-            const double gN = g_NMDA[i] * mean_nmda_ * nmda_inf(V[i]);
+            // no NMDA conductance -> skip the Mg-block exp (GCs and PCs never get NMDA input)
+            const double gN = (g_NMDA[i] != 0.0) ? g_NMDA[i] * mean_nmda_ * nmda_inf(V[i]) : 0.0;
             const double gG = g_GABA[i] * mean_gaba_;
             const double G = p.gL + gA + gN + gG;
             const double V_inf = (p.gL * p.EL + (gA + gN) * p.E_AMPA + gG * p.E_GABA) / G;
             // exact solution over the non-refractory part of the tick (t_act == 0 leaves V at reset)
-            V[i] = V_inf + (V[i] - V_inf) * std::exp(-t_act * G / p.Cm);
+            // leak only over a whole tick (most GCs, every tick): the decay is a constant, computed in prepare()
+            const double v_decay = (G == p.gL && t_act == dt) ? leak_decay_ : std::exp(-t_act * G / p.Cm);
+            V[i] = V_inf + (V[i] - V_inf) * v_decay;
 
             // conductances decay for the next tick
             g_AMPA[i] *= decay_ampa_;
@@ -193,6 +196,7 @@ private:
     double prepared_dt_ = -1.0;
     double decay_ampa_ = 0.0, decay_nmda_ = 0.0, decay_gaba_ = 0.0;
     double mean_ampa_ = 0.0, mean_nmda_ = 0.0, mean_gaba_ = 0.0;
+    double leak_decay_ = 0.0;   // membrane decay over one tick with only the leak conductance
 
     void prepare(double dt) {
         prepared_dt_ = dt;
@@ -203,5 +207,7 @@ private:
         mean_ampa_ = p.tau_AMPA / dt * (1.0 - decay_ampa_);
         mean_nmda_ = p.tau_NMDA / dt * (1.0 - decay_nmda_);
         mean_gaba_ = p.tau_GABA / dt * (1.0 - decay_gaba_);
+        // same expression as the exact update in step(), so using it doesn't change results
+        leak_decay_ = std::exp(-dt * p.gL / p.Cm);
     }
 };

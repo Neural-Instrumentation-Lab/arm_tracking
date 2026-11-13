@@ -151,10 +151,10 @@ def simulate(exp, save, showOutput, makeMovie, reset=True):
     plot_arm_results(final_traj, aligned_des, show=showOutput, saveLoc=exp.graphs, save=save)
     roles = exp.bmi.dcn_roles()          # None unless the BMI misreads some DCNs (runSimulation set it up)
     plot_brain_results(errorTot, time, brain, show=showOutput, saveLoc=exp.graphs, save=save, roles=roles)
-    plot_dcn_raster(brainResults, time, brain, exp.brain_timestep, reset=reset, show=showOutput, saveLoc=exp.graphs,
+    plot_dcn_raster(brainResults, time, brain, exp.brain_timestep, show=showOutput, saveLoc=exp.graphs,
                     save=save, roles=roles)
     if roles is not None:
-        plot_dcn_roles(brainResults, time, exp.brain_timestep, roles, reset=reset, show=showOutput,
+        plot_dcn_roles(brainResults, time, exp.brain_timestep, roles, show=showOutput,
                        saveLoc=exp.graphs, save=save)
     if makeMovie:
         # each snapshot has its own start point, so the desired path is aligned per trial
