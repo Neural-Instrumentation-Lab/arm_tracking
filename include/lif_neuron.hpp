@@ -109,8 +109,8 @@ public:
 // Synaptic inputs (ampa_input / nmda_input / gaba_input) are per-neuron
 // totals for this timestep -- already summed across any coincident
 // presynaptic spikes, matching the numpy version's calling convention.
-// Passing std::nullopt is equivalent to Python's `None` (skip that
-// receptor type entirely, same as all-zero input but slightly cheaper).
+// Passing nullptr is equivalent to Python's `None` (skip that receptor
+// type entirely, same as all-zero input but slightly cheaper).
 // ---------------------------------------------------------------------
 class LIFPopulation {
 public:
@@ -122,7 +122,8 @@ public:
           g_GABA(n, 0.0),
           refractory_time_left(n, 0.0),
           spike_counts(n, 0),
-          t(0.0) {}
+          t(0.0),
+          spiked(n, 0) {}
 
     std::size_t size() const { return n; }
 
@@ -136,6 +137,7 @@ public:
     std::vector<double> refractory_time_left;
     std::vector<int64_t> spike_counts;
     double t;
+    std::vector<uint8_t> spiked;  // last tick's spike flags (reused buffer, returned by step)
 
     static double _nmda_inf_scalar(double v) {
         // Eq. (10), vectorized version's formula (differs from the scalar
@@ -143,21 +145,26 @@ public:
         return 1.0 / (1.0 + std::exp(-62.0 * v) * (1.2 / 3.57));
     }
 
-    // ampa_input / nmda_input / gaba_input: pass std::nullopt for "None".
-    // When provided, must have size() == n.
-    std::vector<uint8_t> step(double dt,
-                               const std::optional<std::vector<double>>& ampa_input = std::nullopt,
-                               const std::optional<std::vector<double>>& nmda_input = std::nullopt,
-                               const std::optional<std::vector<double>>& gaba_input = std::nullopt) {
-        std::vector<uint8_t> spiked(n, 0);
+    // ampa_input / nmda_input / gaba_input: per-neuron input for this tick, or nullptr for "None"
+    // (skip that receptor type). Non-null pointers must point at n doubles. Raw pointers so the
+    // cerebellum can pass its buffers without copying them (the GC input is 60000 doubles a tick);
+    // the Python binding converts None / arrays to these. Returns the per-neuron spike flags.
+    const std::vector<uint8_t>& step(double dt,
+                                     const double* ampa_ptr = nullptr,
+                                     const double* nmda_ptr = nullptr,
+                                     const double* gaba_ptr = nullptr) {
+        std::fill(spiked.begin(), spiked.end(), 0);
 
         const double decay_ampa = std::exp(-dt / p.tau_AMPA);
         const double decay_nmda = std::exp(-dt / p.tau_NMDA);
         const double decay_gaba = std::exp(-dt / p.tau_GABA);
-
-        const std::vector<double>* ampa_ptr = ampa_input ? &(*ampa_input) : nullptr;
-        const std::vector<double>* nmda_ptr = nmda_input ? &(*nmda_input) : nullptr;
-        const std::vector<double>* gaba_ptr = gaba_input ? &(*gaba_input) : nullptr;
+        // membrane decay over the tick when only the leak conductance is on (most GCs, every tick).
+        // Same expression as the general update below with G == gL, so using it doesn't change results.
+        const double leak_decay = std::exp(-dt * p.gL / p.Cm);
+        // V_inf with no synaptic conductance, by the same expression as the general update below
+        // (gA = gN = gG = 0, G = gL), so the quiescent fast path gives bit-identical results
+        const double zero = 0.0;
+        const double leak_V_inf = (p.gL * p.EL + zero * p.E_AMPA + zero * p.E_GABA) / p.gL;
 
         for (std::size_t i = 0; i < n; ++i) {
             // 3) Advance refractory countdown
@@ -171,11 +178,25 @@ public:
 
             // 2) Add new synaptic input -- applies to refractory neurons too,
             //    matching LIFNeuron's behavior.
-            if (ampa_ptr) g_AMPA[i] += (*ampa_ptr)[i];
-            if (nmda_ptr) g_NMDA[i] += (*nmda_ptr)[i];
-            if (gaba_ptr) g_GABA[i] += (*gaba_ptr)[i];
+            if (ampa_ptr) g_AMPA[i] += ampa_ptr[i];
+            if (nmda_ptr) g_NMDA[i] += nmda_ptr[i];
+            if (gaba_ptr) g_GABA[i] += gaba_ptr[i];
 
             if (!active) continue;
+
+            // fast path: no conductance at all (almost every GC on any tick) -> only the leak acts
+            if (g_AMPA[i] == 0.0 && g_NMDA[i] == 0.0 && g_GABA[i] == 0.0) {
+                const double V_new = leak_V_inf + (V[i] - leak_V_inf) * leak_decay;
+                if (V_new >= p.V_thr) {
+                    spiked[i] = 1;
+                    V[i] = p.EL;
+                    refractory_time_left[i] = p.T_ref;
+                    spike_counts[i] += 1;
+                } else {
+                    V[i] = V_new;
+                }
+                continue;
+            }
 
             // 4) Integrate membrane potential (Eqs. 4-6), only for non-refractory neurons.
             //    Each conductance decays exponentially within the tick (Eqs. 7-9), so its
@@ -187,10 +208,12 @@ public:
             const double gA = g_AMPA[i] * p.tau_AMPA / dt * (1.0 - decay_ampa);
             const double gN = g_NMDA[i] * p.tau_NMDA / dt * (1.0 - decay_nmda);
             const double gG = g_GABA[i] * p.tau_GABA / dt * (1.0 - decay_gaba);
-            const double g_exc = gA + gN * _nmda_inf_scalar(Vi);
+            // no NMDA conductance -> skip the Mg-block exp (GCs and PCs never get NMDA input)
+            const double g_exc = (gN != 0.0) ? gA + gN * _nmda_inf_scalar(Vi) : gA;
             const double G = p.gL + g_exc + gG;
             const double V_inf = (p.gL * p.EL + g_exc * p.E_AMPA + gG * p.E_GABA) / G;
-            const double V_new = V_inf + (Vi - V_inf) * std::exp(-dt * G / p.Cm);
+            const double v_decay = (G == p.gL) ? leak_decay : std::exp(-dt * G / p.Cm);
+            const double V_new = V_inf + (Vi - V_inf) * v_decay;
 
             // 5) Threshold check -> spike, reset, refractory period
             if (V_new >= p.V_thr) {

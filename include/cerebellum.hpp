@@ -216,7 +216,9 @@ public:
     void granularLayer(const std::vector<double>& q, const std::vector<double>& qd,
                         const std::vector<double>& qdes, const std::vector<double>& qddes,
                         double dt) {
-        std::fill(gc_ampa_input.begin(), gc_ampa_input.end(), 0.0);
+        // only one GC per joint gets input each tick, so clear just last tick's instead of all 60000
+        for (std::size_t idx : gc_driven_) gc_ampa_input[idx] = 0.0;
+        gc_driven_.clear();
 
         for (std::size_t j = 0; j < nJoints; ++j) {
             std::array<double, 4> state{q[j], qd[j], qdes[j], qddes[j]};
@@ -229,9 +231,10 @@ public:
             const auto digits = encode_mf_address(state, ranges);
             const int64_t addressed_index = address_to_gc_index(digits, j);
             gc_ampa_input[static_cast<std::size_t>(addressed_index)] = W_MF_GC * nMF_subgroups;
+            gc_driven_.push_back(static_cast<std::size_t>(addressed_index));
         }
 
-        pfs = gcNeurons.step(dt, gc_ampa_input);
+        pfs = gcNeurons.step(dt, gc_ampa_input.data());
     }
 
     static double errorCalc(double error) {
@@ -302,23 +305,32 @@ public:
         //     applies a kernel-weighted decrement, restricted to that CF's
         //     own PC column. ---
         if (!cf_spike_idx.empty()) {
-            std::vector<int64_t> hist_idx;
-            std::vector<double> hist_time;
+            std::vector<int64_t>& hist_idx = hist_idx_;
+            std::vector<double>& hist_time = hist_time_;
             pf_history.flatten(hist_idx, hist_time);
             if (!hist_idx.empty()) {
-                std::set<int64_t> touched_rows;
+                // rows to clamp afterwards, each once (a GC that keeps firing appears many times in
+                // the history). Marked in a flag per row instead of a std::set; rows are independent,
+                // so clamping them in a different order gives the same weights.
+                std::vector<int64_t>& touched_rows = touched_rows_;
+                touched_rows.clear();
+                row_touched_.resize(pf_pc_wts.size() / n_pc_total, 0);
                 for (std::size_t i = 0; i < hist_idx.size(); ++i) {
                     const double x = hist_time[i] - current_t;
                     const double k = kernelLookupAt(x);
                     if (k != 0.0) {
                         const int64_t row = hist_idx[i];
-                        touched_rows.insert(row);
+                        if (!row_touched_[static_cast<std::size_t>(row)]) {
+                            row_touched_[static_cast<std::size_t>(row)] = 1;
+                            touched_rows.push_back(row);
+                        }
                         const double v = BETA * k;
                         double* row_ptr = &pf_pc_wts[static_cast<std::size_t>(row) * n_pc_total];
                         for (int64_t col : cf_spike_idx) row_ptr[col] += v;
                     }
                 }
                 for (int64_t row : touched_rows) {
+                    row_touched_[static_cast<std::size_t>(row)] = 0;
                     double* row_ptr = &pf_pc_wts[static_cast<std::size_t>(row) * n_pc_total];
                     for (int64_t col : cf_spike_idx) row_ptr[col] = std::clamp(row_ptr[col], W_MIN, W_MAX);
                 }
@@ -327,7 +339,10 @@ public:
     }
 
     void PCstep(double dt) {
-        std::vector<int64_t> pf_idx, cf_idx;
+        std::vector<int64_t>& pf_idx = pf_idx_;
+        std::vector<int64_t>& cf_idx = cf_idx_;
+        pf_idx.clear();
+        cf_idx.clear();
         for (std::size_t i = 0; i < pfs.size(); ++i)
             if (pfs[i]) pf_idx.push_back(static_cast<int64_t>(i));
         for (std::size_t i = 0; i < cf_output.size(); ++i)
@@ -335,12 +350,13 @@ public:
 
         update_pf_pc_weights(pf_idx, cf_idx, static_cast<double>(t));
 
-        std::vector<double> pc_ampa_inp(n_pc_total, 0.0);
+        std::vector<double>& pc_ampa_inp = pc_ampa_inp_;
+        pc_ampa_inp.assign(n_pc_total, 0.0);
         for (int64_t row : pf_idx) {
             const double* row_ptr = &pf_pc_wts[static_cast<std::size_t>(row) * n_pc_total];
             for (std::size_t c = 0; c < n_pc_total; ++c) pc_ampa_inp[c] += row_ptr[c];
         }
-        pc_out = pcNeurons.step(dt, pc_ampa_inp);
+        pc_out = pcNeurons.step(dt, pc_ampa_inp.data());
     }
 
     std::vector<double> dcnToTorque(const std::vector<uint8_t>& dcnOut, double /*dt*/) {
@@ -388,7 +404,12 @@ public:
         PCstep(dt);
 
         const std::size_t n_dcn_total = dcnNeurons.size();
-        std::vector<double> ampa_in(n_dcn_total), nmda_in(n_dcn_total), gaba_in(n_dcn_total);
+        std::vector<double>& ampa_in = dcn_ampa_in_;
+        std::vector<double>& nmda_in = dcn_nmda_in_;
+        std::vector<double>& gaba_in = dcn_gaba_in_;
+        ampa_in.resize(n_dcn_total);
+        nmda_in.resize(n_dcn_total);
+        gaba_in.resize(n_dcn_total);
         for (std::size_t i = 0; i < n_dcn_total; ++i) {
             const double cf = cf_output[i] ? 1.0 : 0.0;
             ampa_in[i] = W_CF_DCN_AMPA * cf + mf_to_dcn[i];
@@ -397,11 +418,19 @@ public:
         for (std::size_t i = 0; i < n_dcn_total; ++i)
             gaba_in[i] = (pc_out[i] ? 1.0 : 0.0) * W_PC_DCN;
 
-        dcnOut = dcnNeurons.step(dt, ampa_in, nmda_in, gaba_in);
+        dcnOut = dcnNeurons.step(dt, ampa_in.data(), nmda_in.data(), gaba_in.data());
         // (Python checks `if dcnOut[150:199].any(): pass` here -- a no-op
         // left over from debugging. Omitted as genuinely dead code.)
         auto corr = dcnToTorque(dcnOut, dt);
         t += 1;
         return corr;
     }
+
+private:
+    // scratch buffers reused every tick instead of reallocated
+    std::vector<std::size_t> gc_driven_;   // GCs given input last tick (cleared at the start of the next)
+    std::vector<int64_t> pf_idx_, cf_idx_, hist_idx_, touched_rows_;
+    std::vector<double> hist_time_;
+    std::vector<uint8_t> row_touched_;   // per PF row, set while it is in touched_rows_
+    std::vector<double> pc_ampa_inp_, dcn_ampa_in_, dcn_nmda_in_, dcn_gaba_in_;
 };

@@ -103,17 +103,22 @@ class dynamic_3dof_arm:
         accel = pin.aba(self.model, self.data, position, velocity, torque)
         return accel
 
-    def move(self, pos, vel, accel):
+    def move(self, pos, vel=None, accel=None):
         '''
-        updates the model joints and frames.
-        
+        moves the model to joint positions pos, updating the joint placements and the
+        end-effector frame (what getPos() reads).
+
+        Only positions are computed: nothing reads the joint velocities/accelerations or the
+        other frames from self.data, and this runs every sim step (the Baxter model has ~100
+        frames). vel and accel are accepted for compatibility and ignored.
+
         Args:
             pos: joint positions
-            vel: joint velocities
-            accel: joint accelerations
+            vel: joint velocities (ignored)
+            accel: joint accelerations (ignored)
         '''
-        pin.forwardKinematics(self.model, self.data, pos, vel, accel)
-        pin.updateFramePlacements(self.model, self.data)
+        pin.forwardKinematics(self.model, self.data, pos)
+        pin.updateFramePlacement(self.model, self.data, self.eeId)
 
     def inverse(self, position, velocity, accel):
         '''
@@ -457,6 +462,8 @@ class baxter_reduced(dynamic_3dof_arm):
         q_mid = np.zeros(self.model.nq)
         q_mid[:6] = (self.qSuppMin + self.qSuppMax) / 2
         self.s1_spring_sign = np.sign(pin.computeGeneralizedGravity(self.model, self.data, q_mid)[self.s1_idx])
+        # joint damping (the URDF's), negated, for dampingTorque(); fixed once the model is built
+        self._neg_damping = -self.model.damping
 
         if disp:
             # print neutral config
@@ -486,7 +493,8 @@ class baxter_reduced(dynamic_3dof_arm):
         torque spikes went straight into motion, and the light wrist and elbow links jittered and
         drifted from trial to trial (150-trial circle A/B: MAE 0.116 -> 0.063 rad with damping).
         '''
-        return -self.model.damping * np.asarray(velocity)
+        # model.damping is copied out of pinocchio on every access, so it's read once in __init__
+        return self._neg_damping * np.asarray(velocity)
 
     def forward(self, position, velocity, torque):
         '''

@@ -58,7 +58,21 @@ PYBIND11_MODULE(garrido_brain, m) {
     // ---------------- LIFPopulation ----------------
     py::class_<LIFPopulation>(m, "LIFPopulation")
         .def(py::init<std::size_t, const NeuronParams&>(), py::arg("n"), py::arg("params") = NeuronParams())
-        .def("step", &LIFPopulation::step, py::arg("dt"),
+        .def("step", [](LIFPopulation& pop, double dt,
+                        const std::optional<std::vector<double>>& ampa_input,
+                        const std::optional<std::vector<double>>& nmda_input,
+                        const std::optional<std::vector<double>>& gaba_input) {
+                 // None skips that receptor type; arrays must have length n
+                 auto ptr = [&](const std::optional<std::vector<double>>& v, const char* name) -> const double* {
+                     if (!v) return nullptr;
+                     if (v->size() != pop.n)
+                         throw py::value_error(std::string(name) + " must have length n=" + std::to_string(pop.n));
+                     return v->data();
+                 };
+                 return pop.step(dt, ptr(ampa_input, "ampa_input"), ptr(nmda_input, "nmda_input"),
+                                 ptr(gaba_input, "gaba_input"));
+             },
+             py::arg("dt"),
              py::arg("ampa_input") = py::none(), py::arg("nmda_input") = py::none(), py::arg("gaba_input") = py::none())
         .def("__len__", &LIFPopulation::size)
         .def_readonly("n", &LIFPopulation::n)
