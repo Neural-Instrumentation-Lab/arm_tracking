@@ -1,6 +1,6 @@
 from pathlib import Path
 from experiment_assets import Experiment, SweepExperiment
-from bmi import DroppedDCNBMI, CrossClusterBMI
+from bmi import DroppedDCNBMI, CrossClusterBMI, NeurodesBMI
 
 # --- Central, self-documenting registry ------------------------------------
 # This replaces the "type 3 for experiment 3" problem: every experiment has
@@ -97,7 +97,7 @@ EXPERIMENTS: dict[str, Experiment | SweepExperiment] = {
             graphs=GRAPH / "complex_periodic.png",
             videos=VIDEO / "complex_periodic.mp4",
             nDof=2,
-            nTrials=100,
+            nTrials=200,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
@@ -126,7 +126,7 @@ EXPERIMENTS: dict[str, Experiment | SweepExperiment] = {
             graphs=GRAPH / "joystick_pretrained.png",
             videos=VIDEO / "joystick_pretrained.mp4",
             nDof=2,
-            nTrials=10,
+            nTrials=100,
             qMins=(-2, -1),
             qMaxs=(2, 1),
             brain_timestep=2e-3,
@@ -179,7 +179,23 @@ EXPERIMENTS: dict[str, Experiment | SweepExperiment] = {
             brain_timestep=2e-3,
             bmi=CrossClusterBMI(cluster_size=5, right_prob=0.75, seed=0),
         ),
-
+        Experiment(
+            name="joystick_neurodes",
+            description="joystick with neurode bmi",
+            trajectory=TRAJS / "joystick.csv",
+            results=RESUL / "joystick_neurodes.pkl",
+            finalWts=WTS / "joystick_neurodes.npz",
+            graphs=GRAPH / "joystick_neurodes.png",
+            videos=VIDEO / "joystick_neurodes.mp4",
+            nDof=2,
+            nTrials=100,
+            qMins=(-2, -1),
+            qMaxs=(2, 1),
+            brain_timestep=2e-3,
+            bmi=NeurodesBMI(n_neurodes=10, cluster_size=3, noise_rate=100, 
+            right_prob=0.5, cross_prob=0.10, noise_prob=0.40, drop_prob=0.2, seed=0),
+            initialWts=WTS / "joystick.npz",
+        ),
         # --- BMI sweeps (args are dcn_sweep.py's; see python dcn_sweep.py --help / --list) ---
         SweepExperiment(
             name="sweep_num_drop",
@@ -223,6 +239,14 @@ EXPERIMENTS: dict[str, Experiment | SweepExperiment] = {
             base="joystick",
             args=("--bmi", "noisy_mix", "--sweep", "right_prob", "noise_prob"),
         ),
+        SweepExperiment(
+            name="sweep_big_boss",
+            description="joystick circle, unclustered: every right / random-neuron mix that adds up to 1 or less, the rest cross-muscle (csv only)",
+            base="joystick_pretrained",
+            args=("--bmi", "neurodes", "--sweep", "n_neurodes", "cluster_size", "right_prob", "noise_prob", "cross_prob", "drop_prob", "--set", "noise_rate=100",
+            "--trials", "100", "--noReset"),
+        ),
+
     ]
 }
 

@@ -346,6 +346,101 @@ class NoisyMixBMI(NoisyCrossClusterBMI):
                 f"cross_prob={self.cross_prob:g}, noise_prob={self.noise_prob:g}, seed={self.seed})")
 
 
+class NeurodesBMI(BMI):
+    """
+    Each muscle (the 2*nJoints agonist/antagonist groups) is read by n_neurodes neurodes, and each
+    neurode works like one noisy cross-talk cluster: it has cluster_size slots, and it spikes in a
+    tick if any of its slots spiked. Each slot is a DCN of the neurode's own muscle with probability
+    right_prob, a DCN of another muscle (chosen uniformly) with probability cross_prob, or a random
+    neuron with probability noise_prob. The three must add up to 1: give any two and the third is 1
+    minus their sum, or give all three. A random neuron fires independently every tick with
+    probability noise_rate * dt, so on average at noise_rate Hz (at most 1/dt, e.g. 500 Hz at
+    dt = 2 ms).
+
+    A neurode's slots read cluster_size different DCN positions, picked at random (so neurodes can
+    share DCNs, and n_neurodes * cluster_size can be more than the group size). Like SpikeDropBMI,
+    every neurode spike is then lost independently with probability drop_prob.
+
+    The count of surviving neurode spikes is scaled by nDCNs / n_neurodes, so all neurodes spiking
+    reads the same as all DCNs spiking in the normal brain, and divided by (1 - drop_prob) so the
+    command matches on average, capped at the group size. The wiring is drawn once in setup() and
+    fixed for the run.
+    """
+
+    def __init__(self, n_neurodes, cluster_size, noise_rate, right_prob=None, cross_prob=None,
+                 noise_prob=None, drop_prob=0.0, seed=None):
+        probs = resolve_probs({"right_prob": right_prob, "cross_prob": cross_prob, "noise_prob": noise_prob})
+        self.n_neurodes = int(n_neurodes)
+        self.cluster_size = int(cluster_size)
+        self.noise_rate = float(noise_rate)
+        self.right_prob = probs["right_prob"]
+        self.cross_prob = probs["cross_prob"]
+        self.noise_prob = probs["noise_prob"]
+        self.drop_prob = float(drop_prob)
+        self.seed = seed
+
+    def setup(self, brain):
+        super().setup(brain)
+        if self.n_neurodes < 1:
+            raise BMIError(f"n_neurodes must be at least 1 (got {self.n_neurodes})")
+        if not 1 <= self.cluster_size <= self.nPerGroup:
+            raise BMIError(f"cluster_size must be between 1 and {self.nPerGroup} (got {self.cluster_size})")
+        if not 0 <= self.noise_rate * self.dt <= 1:
+            raise BMIError(f"noise_rate must be between 0 and {1 / self.dt:g} Hz at dt={self.dt:g} s "
+                           f"(got {self.noise_rate:g})")
+        if not 0 <= self.drop_prob < 1:
+            raise BMIError(f"drop_prob must be at least 0 and below 1 (got {self.drop_prob})")
+
+        nGroups = self.nJoints * 2
+        shape = (nGroups, self.n_neurodes, self.cluster_size)
+        rng = np.random.default_rng(self.seed)
+        # DCN position of each slot: cluster_size different positions per neurode
+        order = np.argsort(rng.random((nGroups, self.n_neurodes, self.nPerGroup)), axis=-1)
+        self.slot = order[..., :self.cluster_size]
+        # what each slot is: right DCN, cross-talk DCN or random neuron
+        kind = rng.random(shape)
+        own = np.arange(nGroups)[:, None, None]
+        # wrong muscle: an offset of 1..nGroups-1 from the right one, so every other muscle is equally likely
+        wrong = (own + rng.integers(1, nGroups, size=shape)) % nGroups if nGroups > 1 else np.broadcast_to(own, shape)
+        self.source = np.where(kind < self.right_prob, own, wrong)              # muscle each slot reads from
+        self.noise = kind >= self.right_prob + self.cross_prob                  # slots that are random neurons
+        # own stream, so the per-tick noise and drops don't reuse the random numbers that drew the wiring
+        self.rng = np.random.default_rng(None if self.seed is None else [self.seed, 1])
+        self.spike_prob = self.noise_rate * self.dt
+        return self
+
+    def dcn_roles(self):
+        n_groups = self.nJoints * 2
+        own = np.arange(n_groups)[:, None, None]
+        right = np.zeros((n_groups, self.nPerGroup), dtype=bool)
+        wrong = np.zeros_like(right)
+        is_right = ~self.noise & (self.source == own)
+        is_wrong = ~self.noise & (self.source != own)
+        right[self.source[is_right], self.slot[is_right]] = True
+        wrong[self.source[is_wrong], self.slot[is_wrong]] = True
+        roles = np.full(right.shape, DCN_ROLES.index("unread"))
+        roles[right] = DCN_ROLES.index("right")
+        roles[wrong] = DCN_ROLES.index("wrong")
+        roles[right & wrong] = DCN_ROLES.index("both")
+        return roles.ravel()
+
+    def group_counts(self, groups):
+        seen = groups[self.source, self.slot]                   # (nGroups, n_neurodes, cluster_size)
+        if self.noise.any():
+            seen = np.where(self.noise, self.rng.random(seen.shape) < self.spike_prob, seen)
+        fired = seen.any(axis=2)                                # neurode spikes
+        if self.drop_prob > 0:
+            fired &= self.rng.random(fired.shape) >= self.drop_prob
+        counts = fired.sum(axis=1) * (self.nPerGroup / self.n_neurodes) / (1 - self.drop_prob)
+        return np.minimum(counts, self.nPerGroup)
+
+    def __repr__(self):
+        return (f"NeurodesBMI(n_neurodes={self.n_neurodes}, cluster_size={self.cluster_size}, "
+                f"noise_rate={self.noise_rate:g}, right_prob={self.right_prob:g}, "
+                f"cross_prob={self.cross_prob:g}, noise_prob={self.noise_prob:g}, "
+                f"drop_prob={self.drop_prob:g}, seed={self.seed})")
+
+
 @dataclass(frozen=True)
 class SweepParam:
     """One setting of a BMI that dcn_sweep.py can vary."""
@@ -433,5 +528,17 @@ BMI_SWEEPS = {
          "right_prob": SweepParam(0.5, (0, 0.25, 0.5, 0.75, 0.9, 1), "Probability a recorded neuron is a DCN of the right muscle"),
          "cross_prob": SweepParam(None, (0, 0.1, 0.25, 0.5, 0.75, 1), "Probability a recorded neuron is a DCN of another muscle"),
          "noise_prob": SweepParam(0.25, _NOISE_PROB.values, "Probability a recorded neuron is a random neuron")},
+        linked=(("right_prob", "cross_prob", "noise_prob"),)),
+    "neurodes": BMISweep(
+        lambda seed, n_neurodes, cluster_size, right_prob, noise_prob, noise_rate, cross_prob, drop_prob:
+            NeurodesBMI(n_neurodes, cluster_size, noise_rate, right_prob=right_prob, cross_prob=cross_prob,
+                        noise_prob=noise_prob, drop_prob=drop_prob, seed=seed),
+        {"n_neurodes": SweepParam(10, (1, 2, 5, 10, 25, 50, 100), "Neurodes per agonist/antagonist group", whole=True),
+         "cluster_size": SweepParam(5, (1, 2, 5, 10, 25, 50), f"Neurons per neurode {_N_PER_GROUP}", whole=True),
+         "right_prob": SweepParam(0.5, (0, 0.25, 0.5, 0.75, 0.9, 1), "Probability a neurode slot is a DCN of the right muscle"),
+         "noise_prob": SweepParam(0.25, _NOISE_PROB.values, "Probability a neurode slot is a random neuron"),
+         "noise_rate": _NOISE_RATE,
+         "cross_prob": SweepParam(None, (0, 0.1, 0.25, 0.5, 0.75, 1), "Probability a neurode slot is a DCN of another muscle"),
+         "drop_prob": SweepParam(0, (0, 0.25, 0.5, 0.75, 0.9, 0.95, 0.98), "Probability of dropping each neurode spike")},
         linked=(("right_prob", "cross_prob", "noise_prob"),)),
 }
