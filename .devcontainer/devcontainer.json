@@ -8,6 +8,9 @@
     // Run it by hand from a terminal in the container when you need to
     // (re)build it: .devcontainer/build_brain.sh
     "workspaceFolder": "/workspace",
+    // Keep the container running when VS Code disconnects/closes, so long sims
+    // (run inside tmux) survive. Stop it manually with `docker stop` when done.
+    "shutdownAction": "none",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "postCreateCommand": "./build.sh",
     
