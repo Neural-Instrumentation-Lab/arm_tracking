@@ -1,6 +1,7 @@
 #pragma once
 // Direct ports of the small helper classes in garrido_brain_v01.py:
-// CFsubcomplex, CFsubcomplexALT, MFsubcomplex, PFSpikeHistory, ltd_kernel.
+// CFsubcomplex, CFsubcomplexALT, MFsubcomplex, PFSpikeHistory, ltd_kernel,
+// dcn_stdp_kernel, kernel_window.
 
 #include <vector>
 #include <cmath>
@@ -258,4 +259,22 @@ inline double ltd_kernel(double x, double dk = DK, double tau_ltd = TAU_LTD) {
         return -z * std::exp(z + 1.0);
     }
     return 0.0;
+}
+
+// Symmetric DCN STDP kernel, Luque et al. 2016 Eq. 5 (MF-DCN) and the cos^2 term of
+// Eq. 8 (PC-DCN): k(x) = exp(-|beta*x|) * cos(x)^2, x = lag*dt/sigma. Only the main
+// lobe |x| < pi/2 is kept (the paper's beta is there to damp the later lobes; here
+// they are cut off). lag is in ticks (>= 0, the kernel is symmetric). k(0) = 1.
+inline constexpr double DCN_KERNEL_PI = 3.14159265358979323846;  // np.pi
+
+inline double dcn_stdp_kernel(double lag, double dt, double sigma, double beta = 1.0) {
+    const double x = lag * dt / sigma;
+    if (std::abs(x) >= DCN_KERNEL_PI / 2) return 0.0;
+    const double c = std::cos(x);
+    return std::exp(-std::abs(beta * x)) * c * c;
+}
+
+// last lag (ticks) inside the kernel's main lobe, |lag*dt/sigma| < pi/2
+inline int kernel_window(double dt, double sigma) {
+    return static_cast<int>(std::floor(DCN_KERNEL_PI / 2 * sigma / dt));
 }

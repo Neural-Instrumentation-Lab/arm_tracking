@@ -224,9 +224,9 @@ Saving/loading final brain weights.
  
 Weights are a single snapshot (not a time series like trajectories), made up
 of a few named groups of possibly different lengths:
-    pf_pc   - parallel fiber -> Purkinje cell weights, length n_pf
-    mf_dcn  - mossy fiber -> DCN weights, length n_muscle
-    pc_dcn  - Purkinje cell -> DCN weights, length n_muscle
+    pf_pc   - parallel fiber -> Purkinje cell weights, brain.pf_pc_wts
+    mf_dcn  - mossy fiber -> DCN weights, shape (n_mf, n_dcn), brain.mf_dcn_wts
+    pc_dcn  - Purkinje cell -> DCN weights, shape (n_dcn,) (one PC per DCN), brain.pc_dcn_wts
  
 Stored as a numpy .npz archive (each group kept as its own named array, no
 flattening/reassembly needed) plus an optional YAML sidecar for anything
@@ -234,9 +234,9 @@ that isn't inferable from the arrays themselves (e.g. training notes).
 """
 @dataclass
 class Weights:
-    pf_pc: np.ndarray    # shape (nTrials, n_pf, n_muscle)
-    mf_dcn: np.ndarray   # shape (nTrials, n_muscle)
-    pc_dcn: np.ndarray   # shape (nTrials, n_muscle,)
+    pf_pc: np.ndarray    # brain.pf_pc_wts
+    mf_dcn: np.ndarray   # shape (n_mf, n_dcn)
+    pc_dcn: np.ndarray   # shape (n_dcn,)
     meta: dict = field(default_factory=dict)
     source: Path | None = None
  
@@ -246,7 +246,7 @@ class Weights:
  
     @property
     def n_muscle(self) -> int:
-        return self.mf_dcn.shape[0]
+        return self.pc_dcn.shape[0]
  
     def __repr__(self) -> str:
         return (
@@ -265,9 +265,9 @@ def save_weights(
  
     Args:
         fname: output path, e.g. "results/weights_exp_02.npz"
-        pf_pc: parallel fiber -> Purkinje cell weights, shape (n_pf,)
-        mf_dcn: mossy fiber -> DCN weights, shape (n_muscle,)
-        pc_dcn: Purkinje cell -> DCN weights, shape (n_muscle,)
+        pf_pc: parallel fiber -> Purkinje cell weights (brain.pf_pc_wts)
+        mf_dcn: mossy fiber -> DCN weights, shape (n_mf, n_dcn) (brain.mf_dcn_wts)
+        pc_dcn: Purkinje cell -> DCN weights, shape (n_dcn,) (brain.pc_dcn_wts)
         meta: optional dict written to a sidecar fname.yaml (e.g. training notes,
             n_epochs, final_error)
  

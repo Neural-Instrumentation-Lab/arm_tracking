@@ -174,6 +174,58 @@ def plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=True, s
         plt.show()
     plt.close(fig)
 
+def dcn_weight_summary(brain):
+    """
+    Per microzone half (agonist / antagonist of each joint, 12 groups of DCNs), the mean, min and max
+    of the MF-DCN and PC-DCN weights onto that group's DCNs. Returns {site: (mean, lo, hi)}, each (12,).
+    """
+    groups = 2 * brain.nJoints
+    mf = np.asarray(brain.mf_dcn_wts)                       # (nMF total, nDCN total)
+    mf = mf.reshape(mf.shape[0], groups, -1).transpose(1, 0, 2).reshape(groups, -1)
+    pc = np.asarray(brain.pc_dcn_wts).reshape(groups, -1)   # one PC per DCN
+    return {site: (w.mean(axis=1), w.min(axis=1), w.max(axis=1)) for site, w in (("mf_dcn", mf), ("pc_dcn", pc))}
+
+def plot_dcn_weights(dcnWts, initWts, plastic=("mf_dcn", "pc_dcn"), show=True, save=False, saveLoc=None):
+    """
+    MF-DCN and PC-DCN weights vs trial, one column per joint. Line: mean over the group's synapses,
+    band: min to max. Weights are recorded at the end of each trial (initWts = before trial 1).
+
+    dcnWts: {site: (mean, lo, hi)}, each shape (nTrials, 2*nJoints), from runSimulation
+    initWts: dcn_weight_summary of the brain before the first trial
+    """
+    sites = [(s, t) for s, t in (("mf_dcn", "MF–DCN"), ("pc_dcn", "PC–DCN")) if s in dcnWts]
+    nJoints = dcnWts[sites[0][0]][0].shape[1] // 2
+    halves = (("agonist", "#2a78d6"), ("antagonist", "#eb6834"))
+    fig, axs = plt.subplots(len(sites), nJoints, sharex=True, squeeze=False,
+                            figsize=(2.6 * nJoints, 2.8 * len(sites)), layout="constrained")
+    for r, (site, title) in enumerate(sites):
+        mean, lo, hi = (np.vstack([initWts[site][i][None], dcnWts[site][i]]) * 1e9 for i in range(3))
+        trials = np.arange(mean.shape[0])          # 0 = before trial 1
+        for j in range(nJoints):
+            ax = axs[r, j]
+            for h, (label, color) in enumerate(halves):
+                g = 2 * j + h
+                ax.fill_between(trials, lo[:, g], hi[:, g], color=color, alpha=0.15, linewidth=0)
+                ax.plot(trials, mean[:, g], color=color, linewidth=2, label=label)
+            ax.axhline(initWts[site][0].mean() * 1e9, color="0.6", linestyle="--", linewidth=1)
+            if r == 0:
+                ax.set_title(f"Joint {j + 1}", fontsize=10)
+            if j == 0:
+                ax.set_ylabel(f"{title} weight (nS)" + ("" if site in plastic else "\n(not plastic)"))
+            if r == len(sites) - 1:
+                ax.set_xlabel("Trial")
+            ax.grid(axis="y", color="0.9", linewidth=0.6)
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+    axs[0, -1].legend(loc="best", fontsize=8, frameon=False)
+    fig.suptitle("DCN synaptic weights vs trial  (line: group mean, band: min–max, dashed: initial)")
+    if save:
+        saveLoc.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(saveLoc.with_name(saveLoc.stem + "_dcn_wts" + saveLoc.suffix), dpi=300)
+    if show:
+        plt.show()
+    plt.close(fig)
+
 def plot_dcn_raster(dcnSnapshots, nTrials, show=True, save=False, saveLoc=None):
     """
     Raster of every DCN's spikes over one whole trial, at the first, middle and final trial.
@@ -300,6 +352,8 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
         mf_dcn: evolution of mf-dcn weights over nTrials
         pc_dcn: evolution of pc-dcn weights over nTrials
         dcnSnapshots: {trial: (times, DCN spikes per brain tick)} for the first, middle and final trial
+        dcnWts: {site: (mean, lo, hi)} MF-DCN / PC-DCN weights per microzone half at the end of each
+            trial, each shape (nTrials, 2*nJoints) -- see dcn_weight_summary
 
     '''
     # initialize the trajectory
@@ -340,6 +394,7 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
     torrSup = np.zeros_like(corrTorque)
     # DCN spikes of a few trials, for the raster plot (every trial would be nTrials x ticks x nDCN)
     dcnSnapshots = {t: ([], []) for t in sorted({0, nTrials // 2, nTrials - 1})}
+    dcnWts = {site: tuple(np.zeros((nTrials, 2 * brain.nJoints)) for _ in range(3)) for site in ("mf_dcn", "pc_dcn")}
     for trial in range(nTrials):
         for i, torque in enumerate(traj_w_error.torq):
             # compute error 
@@ -387,10 +442,13 @@ def runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials):
             final_traj.torq[trial, i] = corrTorque
             if trial == nTrials-1:
                 final_traj.acel[i,:]  = currAcc
+        for site, stats in dcn_weight_summary(brain).items():
+            for arr, val in zip(dcnWts[site], stats):
+                arr[trial] = val
         errorTot[trial]  = np.sum([np.linalg.norm(des[:6] - act[:6]) for (des,act) in zip(traj_w_error.pos,  final_traj.pos)])
         print(f"trial {trial} done")
     dcnSnapshots = {t: (np.array(ts), np.array(sp)) for t, (ts, sp) in dcnSnapshots.items()}
-    return final_traj, errorTot, dcnSnapshots
+    return final_traj, errorTot, dcnSnapshots, dcnWts
 
 def transform(traj, arm):
     '''
@@ -516,6 +574,9 @@ def simulate(exp, save, showOutput, grav, makeMovie):
                                      ranges.get("mf_velocity_max", arm.qdCurSuppMax)))
     brain           = gb.cerebellum(mfQMin, mfQdMin, mfQMax, mfQdMax, n_dof=arm.njoints,
                                     qdCurMins=mfQdCurMin, qdCurMaxs=mfQdCurMax)
+    # which synaptic sites learn (Experiment.plastic, default all three)
+    brain.setActiveSites(pf_pc="pf_pc" in exp.plastic, mf_dcn="mf_dcn" in exp.plastic,
+                         pc_dcn="pc_dcn" in exp.plastic)
 
     desired_ee_traj     = armTraj(pos=traj_data.position,       vel=traj_data.velocity,       accel=traj_data.acceleration)
     traj_w_error        = armTraj(pos=traj_data.joint_position, vel=traj_data.joint_velocity, accel=traj_data.joint_acceleration)
@@ -532,7 +593,8 @@ def simulate(exp, save, showOutput, grav, makeMovie):
 
     # Forward Dynamics: applying those computed torques to the actual arm
     # with a control feedback from the cerebellar model 
-    final_traj, errorTot, dcnSnapshots = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
+    initDcnWts = dcn_weight_summary(brain)
+    final_traj, errorTot, dcnSnapshots, dcnWts = runSimulation(arm, traj_w_error, desired_ee_traj, time, brain, nTrials=exp.nTrials)
 
     # no-brain case for a control 
     cntrl_traj = arm.forwardDynamics(traj_w_error.pos, traj_w_error.vel, traj_w_error.torq, time)
@@ -542,7 +604,10 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     arm_ids      = {1: armFile,       2: armFile,    3: armFile,    4: armFile}
     if save:
         save_trajectories(trajectories, arm_ids, time[1] - time[0], filename=exp.results)
-        # save_weights(exp.finalWts, brainResults.pf_pc[-1, :], brainResults.mf_dcn[-1, :], brainResults.pc_dcn[-1, :])
+        # final weights of all three plastic sites (full arrays, not the per-trial summaries)
+        save_weights(exp.finalWts, brain.pf_pc_wts, brain.mf_dcn_wts, brain.pc_dcn_wts,
+                     meta={"nTrials": int(exp.nTrials), "plastic": list(exp.plastic),
+                           "final_error": float(errorTot[-1])})
 
     # plotting 
     errJointNoBrain    = [np.linalg.norm(des - act)/(n_dof-1) for (des,act) in zip(traj_no_error.pos[:6],  cntrl_traj.pos[:6])]
@@ -550,6 +615,7 @@ def simulate(exp, save, showOutput, grav, makeMovie):
     plot_arm_results(traj_no_error, cntrl_traj, traj_w_error, final_traj, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_brain_results(wts, errJointNoBrain, errorTot, time, n_dof, show=showOutput, saveLoc=exp.graphs, save=save)
     plot_dcn_raster(dcnSnapshots, exp.nTrials, show=showOutput, saveLoc=exp.graphs, save=save)
+    plot_dcn_weights(dcnWts, initDcnWts, plastic=exp.plastic, show=showOutput, saveLoc=exp.graphs, save=save)
 
     if not showOutput:
         print("Simulation Complete...")

@@ -177,6 +177,22 @@ def ltd_kernel(x, dk=DK, tau_ltd=TAU_LTD):
     out[mask] = -z * np.exp(z + 1.0)
     return out
 
+def dcn_stdp_kernel(lags, dt, sigma, beta=1.0):
+    """
+    Symmetric DCN STDP kernel, Luque et al. 2016 Eq. 5 (MF-DCN) and the cos^2 term of Eq. 8 (PC-DCN):
+    k(x) = exp(-|beta*x|) * cos(x)^2, x = lag*dt/sigma. Only the main lobe |x| < pi/2 is kept (the
+    paper's beta is there to damp the later lobes; here they are cut off). lags are in ticks (>= 0,
+    the kernel is symmetric). k(0) = 1.
+    """
+    x = np.asarray(lags, dtype=np.float64) * dt / sigma
+    out = np.exp(-np.abs(beta * x)) * np.cos(x) ** 2
+    out[np.abs(x) >= np.pi / 2] = 0.0
+    return out
+
+def kernel_window(dt, sigma):
+    """last lag (ticks) inside the kernel's main lobe, |lag*dt/sigma| < pi/2"""
+    return int(np.floor(np.pi / 2 * sigma / dt))
+
 def restrictAngle(angle):
     return ((angle + np.pi) % (2*np.pi)) - np.pi 
 
@@ -191,6 +207,27 @@ class cerebellum:
     BETA  = -0.001e-9         # (S)
     INIT_PF_PC_WT = 1.6e-9    # (S)
     W_MIN, W_MAX = 0.0, 5e-9  # pf-pc weight lims (S)
+
+    # --- DCN plasticity, Luque et al. 2016 (reading/luque_2016.pdf), Eqs. 5-8 ---
+    # The paper gives the rules but no values. Each rule is set by the rate it settles at, chosen
+    # near this model's untrained rates (PC ~46 Hz, DCN ~153 Hz) so plasticity starts near rest.
+    # MF-DCN (Eqs. 5-6): LTP = fixed MF_DCN_ALPHA per MF spike; LTD = MF_DCN_BETA * k(t_MF - t_PC)
+    # for each MF spike within the kernel window (before or after) of a PC spike reaching that DCN.
+    # Balance: alpha = beta * r_PC * dt * sum_k  ->  PCs above MF_DCN_PC_RATE depress, below potentiate.
+    MF_DCN_ALPHA      = 3e-15     # (S) per MF spike
+    MF_DCN_PC_RATE    = 45.0      # (Hz) PC rate where MF-DCN LTP and LTD balance (sets MF_DCN_BETA)
+    MF_DCN_SIGMA      = 20e-3     # (s) kernel width sigma_MF-DCN
+    MF_DCN_KBETA      = 1.0       # kernel beta of Eq. 5
+    # weight caps: per-synapse peak conductances of Luque 2016 Table A1 (DCN excitatory 1 nS,
+    # inhibitory 30 nS); EDLUT bounds a plastic synapse's weight by its peak conductance
+    MF_DCN_W_MIN, MF_DCN_W_MAX = 0.0, 1e-9     # (S) per MF-DCN synapse, Table A1
+    # PC-DCN symmetric i-STDP (Eq. 8): every PC spike depresses by PC_DCN_LTD_MAX; every PC/DCN
+    # spike pair potentiates by PC_DCN_LTP_MAX * k(t_DCN - t_PC). Balance: the DCN settles at
+    # PC_DCN_DCN_RATE = LTD_MAX / (LTP_MAX * dt * sum_k) (sets PC_DCN_LTP_MAX).
+    PC_DCN_LTD_MAX    = 3.5e-13   # (S) per PC spike
+    PC_DCN_DCN_RATE   = 150.0     # (Hz) DCN rate where PC-DCN LTP and LTD balance
+    PC_DCN_SIGMA      = 20e-3     # (s) kernel width sigma_PC-DCN
+    PC_DCN_W_MIN, PC_DCN_W_MAX = 0.0, 30e-9    # (S) per PC-DCN synapse, Table A1
 
     def __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6, qdCurMins=None, qdCurMaxs=None):
         # qdMins/qdMaxs encode the desired velocity; qdCurMins/qdCurMaxs encode the measured
@@ -225,10 +262,20 @@ class cerebellum:
         self.effDelay = 50e-3
         self.affDelay = 50e-3
 
-        # this AMPA input is constant from MF firing rate being constant
-        # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.nMF_subgroups*n_dof*self.W_MF_DCN
-        self.mf_to_dcn = np.ones(self.nDCN*n_dof)*self.W_MF_DCN
-        # self.mf_to_dcn = np.ones(self.nDCN*n_dof)*0.12e-9
+        # which synaptic sites learn (see setActiveSites)
+        self.plastic_pf_pc = True
+        self.plastic_mf_dcn = True
+        self.plastic_pc_dcn = True
+
+        # MF -> DCN: every MF reaches every DCN (Luque 2016). Every tick exactly one MF per subgroup
+        # per joint fires (the one-hot state code that also drives the GCs), so each DCN gets
+        # nMF_subgroups*n_dof MF spikes a tick; starting each synapse at W_MF_DCN / that count gives
+        # every DCN the same W_MF_DCN per tick as the old fixed MF drive.
+        self.nMF_active = self.nMF_subgroups * n_dof
+        self.mf_dcn_wts = np.full((self.nMF * n_dof, self.nDCN * n_dof), self.W_MF_DCN / self.nMF_active)
+        self.mf_idx = np.zeros(self.nMF_active, dtype=np.int64)   # MFs that fired this tick
+        # PC -> DCN: one-to-one (PC i inhibits DCN i)
+        self.pc_dcn_wts = np.full(self.nPC * n_dof, self.W_PC_DCN)
 
         self.gcNeurons     = LIFPopulation(n=self.nGC * n_dof, params=GC_params)
         self.gc_ampa_input = np.zeros(self.nGC * n_dof, dtype=np.float64)
@@ -256,6 +303,33 @@ class cerebellum:
 
         # pre-calculate a bunch of these values
         self.kernelLookup = self.makeKernelLookup() 
+
+        # DCN STDP kernels, indexed by lag in ticks
+        self.mf_dcn_window = kernel_window(self.timeStep, cerebellum.MF_DCN_SIGMA)
+        self.pc_dcn_window = kernel_window(self.timeStep, cerebellum.PC_DCN_SIGMA)
+        self.mf_dcn_kernel = dcn_stdp_kernel(np.arange(self.mf_dcn_window + 1), self.timeStep,
+                                             cerebellum.MF_DCN_SIGMA, cerebellum.MF_DCN_KBETA)
+        self.pc_dcn_kernel = dcn_stdp_kernel(np.arange(self.pc_dcn_window + 1), self.timeStep,
+                                             cerebellum.PC_DCN_SIGMA)
+        # sum of the kernel over every pair lag, -window..window (lag 0 once)
+        mf_k_sum = self.mf_dcn_kernel[0] + 2 * self.mf_dcn_kernel[1:].sum()
+        pc_k_sum = self.pc_dcn_kernel[0] + 2 * self.pc_dcn_kernel[1:].sum()
+        self.mf_dcn_beta = cerebellum.MF_DCN_ALPHA / (cerebellum.MF_DCN_PC_RATE * self.timeStep * mf_k_sum)
+        self.pc_dcn_ltp_max = cerebellum.PC_DCN_LTD_MAX / (cerebellum.PC_DCN_DCN_RATE * self.timeStep * pc_k_sum)
+
+        # spike histories for the DCN rules: ring buffers indexed by tick % length.
+        # Slots for ticks before the first are empty (MF index -1, no PC/DCN spikes).
+        self.mf_hist_len = self.mf_dcn_window + 1
+        self.mf_hist = np.full((self.mf_hist_len, self.nMF_active), -1, dtype=np.int64)
+        self.spk_hist_len = max(self.mf_dcn_window, self.pc_dcn_window) + 1
+        self.pc_hist = np.zeros((self.spk_hist_len, self.nPC * n_dof), dtype=bool)
+        self.dcn_hist = np.zeros((self.spk_hist_len, self.nDCN * n_dof), dtype=bool)
+
+    def setActiveSites(self, pf_pc=True, mf_dcn=True, pc_dcn=True):
+        """Turn learning on/off per synaptic site (Experiment.plastic). Frozen sites keep their weights."""
+        self.plastic_pf_pc = bool(pf_pc)
+        self.plastic_mf_dcn = bool(mf_dcn)
+        self.plastic_pc_dcn = bool(pc_dcn)
 
 
     def makeKernelLookup(self):
@@ -327,6 +401,9 @@ class cerebellum:
                                                                                (self.qdmins[j], self.qdmaxs[j])))
             addressed_index = self.address_to_gc_index(digits, j)
             self.gc_ampa_input[addressed_index] = self.W_MF_GC * self.nMF_subgroups
+            # the MFs behind this GC: MF index = joint*nMF + subgroup*nMF_per_subgroup + digit
+            for sg, d in enumerate(digits):
+                self.mf_idx[j * self.nMF_subgroups + sg] = j * self.nMF + sg * self.nMF_per_subgroup + d
         self.pfs = self.gcNeurons.step(dt=dt, ampa_input=self.gc_ampa_input)
 
 
@@ -413,9 +490,74 @@ class cerebellum:
     def PCstep(self, dt):
         pf_idx = np.nonzero(self.pfs)[0]
         cf_idx = np.nonzero(self.cf_output)[0]
-        self.update_pf_pc_weights(self.pf_pc_wts, pf_idx, cf_idx, current_t=self.t, history=self.pf_history)
+        if self.plastic_pf_pc:
+            self.update_pf_pc_weights(self.pf_pc_wts, pf_idx, cf_idx, current_t=self.t, history=self.pf_history)
         pc_ampa_inp = np.sum(self.pf_pc_wts[pf_idx], axis=0)
         self.pc_out = self.pcNeurons.step(dt=dt, ampa_input=pc_ampa_inp)
+
+    def update_mf_dcn_weights(self):
+        """
+        MF-DCN STDP (Luque 2016 Eqs. 5-6) for this tick. MF, PC and DCN spikes of this tick are in
+        the histories at lag 0. Each (MF spike, PC spike) pair within the window is counted once:
+        PC spikes now pair with MF spikes at lags 0..W, MF spikes now with PC spikes at lags 1..W.
+        PC i -> DCN i, so a PC spike in column i depresses the MF synapses onto DCN i.
+        """
+        t, W, k = self.t, self.mf_dcn_window, self.mf_dcn_kernel
+        w = self.mf_dcn_wts
+        mf_now = self.mf_idx
+        pc_cols = np.flatnonzero(self.pc_out)
+        # LTP: fixed jump at every MF spike, on all its DCN targets
+        w[mf_now, :] += cerebellum.MF_DCN_ALPHA
+        # LTD, PC spikes now x MF spikes now and before
+        if pc_cols.size > 0:
+            d = np.zeros(w.shape[0])
+            for lag in range(W + 1):
+                rows = self.mf_hist[(t - lag) % self.mf_hist_len]
+                d[rows[rows >= 0]] += k[lag]   # rows are distinct within a tick
+            w[:, pc_cols] -= self.mf_dcn_beta * d[:, None]
+        # LTD, MF spikes now x PC spikes before
+        c = np.zeros(w.shape[1])
+        for lag in range(1, W + 1):
+            c += k[lag] * self.pc_hist[(t - lag) % self.spk_hist_len]
+        w[mf_now, :] -= self.mf_dcn_beta * c
+        # clamp what changed
+        w[mf_now, :] = np.clip(w[mf_now, :], cerebellum.MF_DCN_W_MIN, cerebellum.MF_DCN_W_MAX)
+        if pc_cols.size > 0:
+            w[:, pc_cols] = np.clip(w[:, pc_cols], cerebellum.MF_DCN_W_MIN, cerebellum.MF_DCN_W_MAX)
+
+    def update_pc_dcn_weights(self):
+        """
+        PC-DCN symmetric i-STDP (Luque 2016 Eq. 8) for this tick: every PC spike depresses its
+        synapse by LTD_MAX; every (PC spike, DCN spike) pair of the same synapse within the window
+        potentiates it by LTP_MAX * k(lag), each pair counted once (as in update_mf_dcn_weights).
+        """
+        t, W, k = self.t, self.pc_dcn_window, self.pc_dcn_kernel
+        pre = self.pc_out
+        post = self.dcnOut
+        dcn_trace = np.zeros(pre.size)   # sum of k over DCN spikes at lags 0..W
+        pc_trace = np.zeros(pre.size)    # sum of k over PC spikes at lags 1..W
+        for lag in range(W + 1):
+            slot = (t - lag) % self.spk_hist_len
+            dcn_trace += k[lag] * self.dcn_hist[slot]
+            if lag > 0:
+                pc_trace += k[lag] * self.pc_hist[slot]
+        dw = self.pc_dcn_ltp_max * (pre * dcn_trace + post * pc_trace) - cerebellum.PC_DCN_LTD_MAX * pre
+        self.pc_dcn_wts = np.clip(self.pc_dcn_wts + dw, cerebellum.PC_DCN_W_MIN, cerebellum.PC_DCN_W_MAX)
+
+    def DCNstep(self, dt):
+        mf_ampa = self.mf_dcn_wts[self.mf_idx].sum(axis=0)
+        self.dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + mf_ampa),
+                                           nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
+                                           gaba_input=(self.pc_out*self.pc_dcn_wts))
+        # this tick's spikes go in at lag 0, then the DCN synapses learn
+        self.mf_hist[self.t % self.mf_hist_len] = self.mf_idx
+        self.pc_hist[self.t % self.spk_hist_len] = self.pc_out
+        self.dcn_hist[self.t % self.spk_hist_len] = self.dcnOut
+        if self.plastic_mf_dcn:
+            self.update_mf_dcn_weights()
+        if self.plastic_pc_dcn:
+            self.update_pc_dcn_weights()
+        return self.dcnOut
 
     def dcnToTorque(self, dcnOut, dt):
         fix = dcnOut.reshape(self.nJoints*2, -1)
@@ -433,9 +575,7 @@ class cerebellum:
         self.climbingFibers(qErr, qdErr, dt)
         # now we have spikes from the PFs and the CFs in cf_output and pfs
         self.PCstep(dt)
-        self.dcnOut = dcnOut = self.dcnNeurons.step(dt=dt, ampa_input=(self.W_CF_DCN_AMPA*self.cf_output + self.mf_to_dcn), 
-                             nmda_input=(self.W_CF_DCN_NMDA*self.cf_output),
-                             gaba_input=(self.pc_out*self.W_PC_DCN))
+        dcnOut = self.DCNstep(dt)
         corr = self.dcnToTorque(dcnOut, dt)
         self.t += 1
         return(corr)

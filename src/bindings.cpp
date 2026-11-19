@@ -126,6 +126,13 @@ PYBIND11_MODULE(garrido_brain, m) {
 
     // ---------------- free functions ----------------
     m.def("ltd_kernel", &ltd_kernel, py::arg("x"), py::arg("dk") = DK, py::arg("tau_ltd") = TAU_LTD);
+    m.def("dcn_stdp_kernel", [](const std::vector<double>& lags, double dt, double sigma, double beta) {
+              std::vector<double> out;
+              out.reserve(lags.size());
+              for (double lag : lags) out.push_back(dcn_stdp_kernel(lag, dt, sigma, beta));
+              return out;
+          }, py::arg("lags"), py::arg("dt"), py::arg("sigma"), py::arg("beta") = 1.0);
+    m.def("kernel_window", &kernel_window, py::arg("dt"), py::arg("sigma"));
     m.def("restrictAngle", py::overload_cast<double>(&restrictAngle), py::arg("angle"));
     m.def("restrictAngle", py::overload_cast<const std::vector<double>&>(&restrictAngle), py::arg("angle"));
     m.def("angle_diff", &angle_diff, py::arg("a"), py::arg("b"));
@@ -139,6 +146,28 @@ PYBIND11_MODULE(garrido_brain, m) {
         .def("compute", &cerebellum::compute,
              py::arg("q"), py::arg("qd"), py::arg("qdes"), py::arg("qddes"),
              py::arg("qErr"), py::arg("qdErr"), py::arg("dt") = 2e-3)
+        .def("setActiveSites", &cerebellum::setActiveSites,
+             py::arg("pf_pc") = true, py::arg("mf_dcn") = true, py::arg("pc_dcn") = true)
+        .def_readonly("plastic_pf_pc", &cerebellum::plastic_pf_pc)
+        .def_readonly("plastic_mf_dcn", &cerebellum::plastic_mf_dcn)
+        .def_readonly("plastic_pc_dcn", &cerebellum::plastic_pc_dcn)
+        .def_readonly("mf_idx", &cerebellum::mf_idx)
+        .def_readonly("mf_dcn_window", &cerebellum::mf_dcn_window)
+        .def_readonly("pc_dcn_window", &cerebellum::pc_dcn_window)
+        .def_readonly("mf_dcn_kernel", &cerebellum::mf_dcn_kernel)
+        .def_readonly("pc_dcn_kernel", &cerebellum::pc_dcn_kernel)
+        .def_readonly("mf_dcn_beta", &cerebellum::mf_dcn_beta)
+        .def_readonly("pc_dcn_ltp_max", &cerebellum::pc_dcn_ltp_max)
+        .def_property_readonly("mf_dcn_wts", [](const cerebellum& c) {
+            // [nMF*nJoints x nDCN*nJoints], copied (small: 240 x 600)
+            const std::size_t rows = c.mf_dcn_wts.size() / c.n_dcn_total;
+            py::array_t<double> out({rows, c.n_dcn_total});
+            std::copy(c.mf_dcn_wts.begin(), c.mf_dcn_wts.end(), out.mutable_data());
+            return out;
+        })
+        .def_property_readonly("pc_dcn_wts", [](const cerebellum& c) {
+            return py::array_t<double>(c.pc_dcn_wts.size(), c.pc_dcn_wts.data());
+        })
         .def_readonly("nJoints", &cerebellum::nJoints)
         .def_readonly("t", &cerebellum::t)
         .def_readonly("pfs", &cerebellum::pfs)

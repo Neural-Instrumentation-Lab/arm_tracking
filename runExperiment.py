@@ -93,24 +93,19 @@ def main() -> None:
         model_v02.simulate(exp, args.save, not args.hide_output, not args.no_grav, args.makeMovie)
     else:
         try:
-            armPlot   = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_arm" + exp.graphs.suffix))
-            brainPlot = plt.imread(exp.graphs.with_name(exp.graphs.stem + "_brain" + exp.graphs.suffix))
-            plt.imshow(armPlot)
-            plt.axis('off')
-            plt.show()
-            plt.axis('off')
-            plt.imshow(brainPlot)
-            plt.show()
-            # results saved before the raster existed don't have one
-            rasterFile = exp.graphs.with_name(exp.graphs.stem + "_dcn_raster" + exp.graphs.suffix)
-            if rasterFile.exists():
+            # arm and brain plots are required; the rest are skipped if the results predate them
+            required = ("_arm", "_brain")
+            for suffix in ("_arm", "_brain", "_pf_pc_wts", "_dcn_raster", "_dcn_wts"):
+                plotFile = exp.graphs.with_name(exp.graphs.stem + suffix + exp.graphs.suffix)
+                if suffix not in required and not plotFile.exists():
+                    continue
+                plt.imshow(plt.imread(plotFile))
                 plt.axis('off')
-                plt.imshow(plt.imread(rasterFile))
                 plt.show()
             play_arm_path.play_traj(exp)
         except FileNotFoundError:
             print("Cannot find results to play. Running the sim and saving the results, then playing traj...")
-            model_v02.simulate(exp, True, True, True)
+            model_v02.simulate(exp, True, True, not args.no_grav, args.makeMovie)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,29 @@ public:
     static constexpr double W_MIN = 0.0;               // pf-pc weight lims (S)
     static constexpr double W_MAX = 5e-9;
 
+    // --- DCN plasticity, Luque et al. 2016 (reading/luque_2016.pdf), Eqs. 5-8 ---
+    // The paper gives the rules but no values. Each rule is set by the rate it settles at, chosen
+    // near this model's untrained rates (PC ~46 Hz, DCN ~153 Hz) so plasticity starts near rest.
+    // MF-DCN (Eqs. 5-6): LTP = fixed MF_DCN_ALPHA per MF spike; LTD = mf_dcn_beta * k(t_MF - t_PC)
+    // for each MF spike within the kernel window (before or after) of a PC spike reaching that DCN.
+    // Balance: alpha = beta * r_PC * dt * sum_k  ->  PCs above MF_DCN_PC_RATE depress, below potentiate.
+    static constexpr double MF_DCN_ALPHA = 3e-15;      // (S) per MF spike
+    static constexpr double MF_DCN_PC_RATE = 45.0;     // (Hz) PC rate where MF-DCN LTP and LTD balance (sets mf_dcn_beta)
+    static constexpr double MF_DCN_SIGMA = 20e-3;      // (s) kernel width sigma_MF-DCN
+    static constexpr double MF_DCN_KBETA = 1.0;        // kernel beta of Eq. 5
+    // weight caps: per-synapse peak conductances of Luque 2016 Table A1 (DCN excitatory 1 nS,
+    // inhibitory 30 nS); EDLUT bounds a plastic synapse's weight by its peak conductance
+    static constexpr double MF_DCN_W_MIN = 0.0;        // (S) per MF-DCN synapse
+    static constexpr double MF_DCN_W_MAX = 1e-9;       // Table A1
+    // PC-DCN symmetric i-STDP (Eq. 8): every PC spike depresses by PC_DCN_LTD_MAX; every PC/DCN
+    // spike pair potentiates by pc_dcn_ltp_max * k(t_DCN - t_PC). Balance: the DCN settles at
+    // PC_DCN_DCN_RATE = LTD_MAX / (LTP_MAX * dt * sum_k) (sets pc_dcn_ltp_max).
+    static constexpr double PC_DCN_LTD_MAX = 3.5e-13;  // (S) per PC spike
+    static constexpr double PC_DCN_DCN_RATE = 150.0;   // (Hz) DCN rate where PC-DCN LTP and LTD balance
+    static constexpr double PC_DCN_SIGMA = 20e-3;      // (s) kernel width sigma_PC-DCN
+    static constexpr double PC_DCN_W_MIN = 0.0;        // (S) per PC-DCN synapse
+    static constexpr double PC_DCN_W_MAX = 30e-9;      // Table A1
+
     // Signature order matches the Python constructor exactly:
     // __init__(self, qMins, qdMins, qMaxs, qdMaxs, n_dof=6, qdCurMins=None, qdCurMaxs=None)
     // qdMins/qdMaxs encode the desired velocity; qdCurMins/qdCurMaxs encode the
@@ -71,7 +94,13 @@ public:
           pcNeurons(nPC * n_dof, PC_params),
           dcnNeurons(nDCN * n_dof, DCN_params),
           prevDCN(15 * n_dof, 0.0),
-          pfs(nGC * n_dof, 0) {
+          pfs(nGC * n_dof, 0),
+          nMF_active(nMF_subgroups * n_dof),
+          n_dcn_total(nDCN * n_dof),
+          mf_dcn_wts(static_cast<std::size_t>(nMF * n_dof) * (nDCN * n_dof),
+                     W_MF_DCN / static_cast<double>(nMF_subgroups * n_dof)),
+          mf_idx(nMF_subgroups * n_dof, 0),
+          pc_dcn_wts(nPC * n_dof, W_PC_DCN) {
         // The Python source hardcodes TORQUE_ALPHA and the climbing-fiber
         // kp/kd gains as length-6 lists -- i.e. it implicitly assumes
         // n_dof == 6 (a 6-DOF arm). Rather than silently reading out of
@@ -99,9 +128,38 @@ public:
         for (std::size_t j = 0; j < nJoints * 2; ++j)
             CF_complexes.emplace_back(static_cast<int>(nCF / 2));
 
-        mf_to_dcn.assign(nDCN * nJoints, W_MF_DCN);
-
         kernelLookup = makeKernelLookup();
+
+        // DCN STDP kernels, indexed by lag in ticks
+        mf_dcn_window = kernel_window(timeStep, MF_DCN_SIGMA);
+        pc_dcn_window = kernel_window(timeStep, PC_DCN_SIGMA);
+        for (int lag = 0; lag <= mf_dcn_window; ++lag)
+            mf_dcn_kernel.push_back(dcn_stdp_kernel(lag, timeStep, MF_DCN_SIGMA, MF_DCN_KBETA));
+        for (int lag = 0; lag <= pc_dcn_window; ++lag)
+            pc_dcn_kernel.push_back(dcn_stdp_kernel(lag, timeStep, PC_DCN_SIGMA));
+        // sum of the kernel over every pair lag, -window..window (lag 0 once)
+        double mf_k_sum = 0.0, pc_k_sum = 0.0;
+        for (std::size_t lag = 1; lag < mf_dcn_kernel.size(); ++lag) mf_k_sum += mf_dcn_kernel[lag];
+        for (std::size_t lag = 1; lag < pc_dcn_kernel.size(); ++lag) pc_k_sum += pc_dcn_kernel[lag];
+        mf_k_sum = mf_dcn_kernel[0] + 2 * mf_k_sum;
+        pc_k_sum = pc_dcn_kernel[0] + 2 * pc_k_sum;
+        mf_dcn_beta = MF_DCN_ALPHA / (MF_DCN_PC_RATE * timeStep * mf_k_sum);
+        pc_dcn_ltp_max = PC_DCN_LTD_MAX / (PC_DCN_DCN_RATE * timeStep * pc_k_sum);
+
+        // spike histories for the DCN rules: ring buffers indexed by tick % length.
+        // Slots for ticks before the first are empty (MF index -1, no PC/DCN spikes).
+        mf_hist_len = static_cast<std::size_t>(mf_dcn_window) + 1;
+        mf_hist.assign(mf_hist_len * nMF_active, -1);
+        spk_hist_len = static_cast<std::size_t>(std::max(mf_dcn_window, pc_dcn_window)) + 1;
+        pc_hist.assign(spk_hist_len * n_pc_total, 0);
+        dcn_hist.assign(spk_hist_len * n_dcn_total, 0);
+    }
+
+    // Turn learning on/off per synaptic site (Experiment.plastic). Frozen sites keep their weights.
+    void setActiveSites(bool pf_pc = true, bool mf_dcn = true, bool pc_dcn = true) {
+        plastic_pf_pc = pf_pc;
+        plastic_mf_dcn = mf_dcn;
+        plastic_pc_dcn = pc_dcn;
     }
 
     // ---- per-instance "constants" set in __init__ ----
@@ -135,8 +193,6 @@ public:
     static constexpr double effDelay = 50e-3;  // unused downstream, kept for parity
     static constexpr double affDelay = 50e-3;
 
-    std::vector<double> mf_to_dcn;
-
     LIFPopulation gcNeurons;
     std::vector<double> gc_ampa_input;
     PFSpikeHistory pf_history;
@@ -162,6 +218,32 @@ public:
     std::array<double, 201> kernelLookup{};  // kernelLookup[k] == python's kernelLookup[-k], k in [0,200]
 
     std::vector<uint8_t> pfs;  // last granular-layer output (self.pfs in Python)
+
+    // which synaptic sites learn (see setActiveSites)
+    bool plastic_pf_pc = true;
+    bool plastic_mf_dcn = true;
+    bool plastic_pc_dcn = true;
+
+    // MF -> DCN: every MF reaches every DCN (Luque 2016). Every tick exactly one MF per subgroup
+    // per joint fires (the one-hot state code that also drives the GCs), so each DCN gets
+    // nMF_active MF spikes a tick; starting each synapse at W_MF_DCN / nMF_active gives every
+    // DCN the same W_MF_DCN per tick as the old fixed MF drive.
+    std::size_t nMF_active;
+    std::size_t n_dcn_total;
+    std::vector<double> mf_dcn_wts;  // flat, row-major: [nMF*nJoints x n_dcn_total]
+    std::vector<int64_t> mf_idx;     // MFs that fired this tick (nMF_active of them)
+    // PC -> DCN: one-to-one (PC i inhibits DCN i)
+    std::vector<double> pc_dcn_wts;
+
+    // DCN STDP kernels (indexed by lag in ticks) and the derived LTD / LTP amplitudes
+    int mf_dcn_window = 0, pc_dcn_window = 0;
+    std::vector<double> mf_dcn_kernel, pc_dcn_kernel;
+    double mf_dcn_beta = 0.0, pc_dcn_ltp_max = 0.0;
+
+    // spike histories, ring buffers indexed by tick % length (row-major [length x n])
+    std::size_t mf_hist_len = 0, spk_hist_len = 0;
+    std::vector<int64_t> mf_hist;
+    std::vector<uint8_t> pc_hist, dcn_hist;
 
     std::array<double, 201> makeKernelLookup() const {
         std::array<double, 201> table{};
@@ -232,6 +314,9 @@ public:
             const int64_t addressed_index = address_to_gc_index(digits, j);
             gc_ampa_input[static_cast<std::size_t>(addressed_index)] = W_MF_GC * nMF_subgroups;
             gc_driven_.push_back(static_cast<std::size_t>(addressed_index));
+            // the MFs behind this GC: MF index = joint*nMF + subgroup*nMF_per_subgroup + digit
+            for (int sg = 0; sg < nMF_subgroups; ++sg)
+                mf_idx[j * nMF_subgroups + sg] = static_cast<int64_t>(j * nMF + sg * nMF_per_subgroup + digits[sg]);
         }
 
         pfs = gcNeurons.step(dt, gc_ampa_input.data());
@@ -348,7 +433,7 @@ public:
         for (std::size_t i = 0; i < cf_output.size(); ++i)
             if (cf_output[i]) cf_idx.push_back(static_cast<int64_t>(i));
 
-        update_pf_pc_weights(pf_idx, cf_idx, static_cast<double>(t));
+        if (plastic_pf_pc) update_pf_pc_weights(pf_idx, cf_idx, static_cast<double>(t));
 
         std::vector<double>& pc_ampa_inp = pc_ampa_inp_;
         pc_ampa_inp.assign(n_pc_total, 0.0);
@@ -357,6 +442,124 @@ public:
             for (std::size_t c = 0; c < n_pc_total; ++c) pc_ampa_inp[c] += row_ptr[c];
         }
         pc_out = pcNeurons.step(dt, pc_ampa_inp.data());
+    }
+
+    // ring-buffer slot of tick `tick`; wraps negative ticks (before the first) like Python's %
+    static std::size_t ring_slot(int64_t tick, std::size_t len) {
+        const int64_t n = static_cast<int64_t>(len);
+        return static_cast<std::size_t>(((tick % n) + n) % n);
+    }
+
+    // MF-DCN STDP (Luque 2016 Eqs. 5-6) for this tick. MF, PC and DCN spikes of this tick are in
+    // the histories at lag 0. Each (MF spike, PC spike) pair within the window is counted once:
+    // PC spikes now pair with MF spikes at lags 0..W, MF spikes now with PC spikes at lags 1..W.
+    // PC i -> DCN i, so a PC spike in column i depresses the MF synapses onto DCN i.
+    void update_mf_dcn_weights() {
+        const int W = mf_dcn_window;
+        const std::size_t n_mf_total = mf_dcn_wts.size() / n_dcn_total;
+        std::vector<int64_t>& pc_cols = pc_cols_;
+        pc_cols.clear();
+        for (std::size_t i = 0; i < n_pc_total; ++i)
+            if (pc_out[i]) pc_cols.push_back(static_cast<int64_t>(i));
+
+        // LTP: fixed jump at every MF spike, on all its DCN targets
+        for (int64_t row : mf_idx) {
+            double* w = &mf_dcn_wts[static_cast<std::size_t>(row) * n_dcn_total];
+            for (std::size_t c = 0; c < n_dcn_total; ++c) w[c] += MF_DCN_ALPHA;
+        }
+        // LTD, PC spikes now x MF spikes now and before
+        if (!pc_cols.empty()) {
+            std::vector<double>& d = mf_trace_;
+            d.assign(n_mf_total, 0.0);
+            for (int lag = 0; lag <= W; ++lag) {
+                const std::size_t slot = ring_slot(t - lag, mf_hist_len);
+                const int64_t* rows = &mf_hist[slot * nMF_active];
+                for (std::size_t r = 0; r < nMF_active; ++r)
+                    if (rows[r] >= 0) d[static_cast<std::size_t>(rows[r])] += mf_dcn_kernel[lag];
+            }
+            for (std::size_t r = 0; r < n_mf_total; ++r) {
+                if (d[r] == 0.0) continue;
+                const double v = mf_dcn_beta * d[r];
+                double* w = &mf_dcn_wts[r * n_dcn_total];
+                for (int64_t col : pc_cols) w[col] -= v;
+            }
+        }
+        // LTD, MF spikes now x PC spikes before
+        std::vector<double>& c = pc_trace_;
+        c.assign(n_dcn_total, 0.0);
+        for (int lag = 1; lag <= W; ++lag) {
+            const std::size_t slot = ring_slot(t - lag, spk_hist_len);
+            const uint8_t* spk = &pc_hist[slot * n_pc_total];
+            for (std::size_t i = 0; i < n_dcn_total; ++i)
+                if (spk[i]) c[i] += mf_dcn_kernel[lag];
+        }
+        for (int64_t row : mf_idx) {
+            double* w = &mf_dcn_wts[static_cast<std::size_t>(row) * n_dcn_total];
+            for (std::size_t i = 0; i < n_dcn_total; ++i) w[i] -= mf_dcn_beta * c[i];
+        }
+        // clamp what changed
+        for (int64_t row : mf_idx) {
+            double* w = &mf_dcn_wts[static_cast<std::size_t>(row) * n_dcn_total];
+            for (std::size_t i = 0; i < n_dcn_total; ++i) w[i] = std::clamp(w[i], MF_DCN_W_MIN, MF_DCN_W_MAX);
+        }
+        for (int64_t col : pc_cols)
+            for (std::size_t r = 0; r < n_mf_total; ++r) {
+                double& w = mf_dcn_wts[r * n_dcn_total + static_cast<std::size_t>(col)];
+                w = std::clamp(w, MF_DCN_W_MIN, MF_DCN_W_MAX);
+            }
+    }
+
+    // PC-DCN symmetric i-STDP (Luque 2016 Eq. 8) for this tick: every PC spike depresses its
+    // synapse by LTD_MAX; every (PC spike, DCN spike) pair of the same synapse within the window
+    // potentiates it by LTP_MAX * k(lag), each pair counted once (as in update_mf_dcn_weights).
+    void update_pc_dcn_weights() {
+        const int W = pc_dcn_window;
+        for (std::size_t i = 0; i < n_pc_total; ++i) {
+            const bool pre = pc_out[i] != 0;
+            const bool post = dcnOut[i] != 0;
+            if (!pre && !post) continue;
+            double dcn_trace = 0.0;  // sum of k over DCN spikes at lags 0..W
+            double pc_trace = 0.0;   // sum of k over PC spikes at lags 1..W
+            for (int lag = 0; lag <= W; ++lag) {
+                const std::size_t slot = ring_slot(t - lag, spk_hist_len);
+                if (dcn_hist[slot * n_dcn_total + i]) dcn_trace += pc_dcn_kernel[lag];
+                if (lag > 0 && pc_hist[slot * n_pc_total + i]) pc_trace += pc_dcn_kernel[lag];
+            }
+            const double dw = pc_dcn_ltp_max * ((pre ? dcn_trace : 0.0) + (post ? pc_trace : 0.0))
+                              - (pre ? PC_DCN_LTD_MAX : 0.0);
+            pc_dcn_wts[i] = std::clamp(pc_dcn_wts[i] + dw, PC_DCN_W_MIN, PC_DCN_W_MAX);
+        }
+    }
+
+    const std::vector<uint8_t>& DCNstep(double dt) {
+        std::vector<double>& ampa_in = dcn_ampa_in_;
+        std::vector<double>& nmda_in = dcn_nmda_in_;
+        std::vector<double>& gaba_in = dcn_gaba_in_;
+        // MF drive: sum of the weights from this tick's MFs
+        ampa_in.assign(n_dcn_total, 0.0);
+        for (int64_t row : mf_idx) {
+            const double* w = &mf_dcn_wts[static_cast<std::size_t>(row) * n_dcn_total];
+            for (std::size_t i = 0; i < n_dcn_total; ++i) ampa_in[i] += w[i];
+        }
+        nmda_in.resize(n_dcn_total);
+        gaba_in.resize(n_dcn_total);
+        for (std::size_t i = 0; i < n_dcn_total; ++i) {
+            const double cf = cf_output[i] ? 1.0 : 0.0;
+            ampa_in[i] = W_CF_DCN_AMPA * cf + ampa_in[i];
+            nmda_in[i] = W_CF_DCN_NMDA * cf;
+            gaba_in[i] = (pc_out[i] ? 1.0 : 0.0) * pc_dcn_wts[i];
+        }
+        dcnOut = dcnNeurons.step(dt, ampa_in.data(), nmda_in.data(), gaba_in.data());
+
+        // this tick's spikes go in at lag 0, then the DCN synapses learn
+        const std::size_t ms = ring_slot(t, mf_hist_len);
+        std::copy(mf_idx.begin(), mf_idx.end(), mf_hist.begin() + ms * nMF_active);
+        const std::size_t ss = ring_slot(t, spk_hist_len);
+        std::copy(pc_out.begin(), pc_out.end(), pc_hist.begin() + ss * n_pc_total);
+        std::copy(dcnOut.begin(), dcnOut.end(), dcn_hist.begin() + ss * n_dcn_total);
+        if (plastic_mf_dcn) update_mf_dcn_weights();
+        if (plastic_pc_dcn) update_pc_dcn_weights();
+        return dcnOut;
     }
 
     std::vector<double> dcnToTorque(const std::vector<uint8_t>& dcnOut, double /*dt*/) {
@@ -402,23 +605,7 @@ public:
         climbingFibers(qErr, qdErr, dt);
         // now we have spikes from the PFs and the CFs in cf_output and pfs
         PCstep(dt);
-
-        const std::size_t n_dcn_total = dcnNeurons.size();
-        std::vector<double>& ampa_in = dcn_ampa_in_;
-        std::vector<double>& nmda_in = dcn_nmda_in_;
-        std::vector<double>& gaba_in = dcn_gaba_in_;
-        ampa_in.resize(n_dcn_total);
-        nmda_in.resize(n_dcn_total);
-        gaba_in.resize(n_dcn_total);
-        for (std::size_t i = 0; i < n_dcn_total; ++i) {
-            const double cf = cf_output[i] ? 1.0 : 0.0;
-            ampa_in[i] = W_CF_DCN_AMPA * cf + mf_to_dcn[i];
-            nmda_in[i] = W_CF_DCN_NMDA * cf;
-        }
-        for (std::size_t i = 0; i < n_dcn_total; ++i)
-            gaba_in[i] = (pc_out[i] ? 1.0 : 0.0) * W_PC_DCN;
-
-        dcnOut = dcnNeurons.step(dt, ampa_in.data(), nmda_in.data(), gaba_in.data());
+        DCNstep(dt);
         // (Python checks `if dcnOut[150:199].any(): pass` here -- a no-op
         // left over from debugging. Omitted as genuinely dead code.)
         auto corr = dcnToTorque(dcnOut, dt);
@@ -433,4 +620,6 @@ private:
     std::vector<double> hist_time_;
     std::vector<uint8_t> row_touched_;   // per PF row, set while it is in touched_rows_
     std::vector<double> pc_ampa_inp_, dcn_ampa_in_, dcn_nmda_in_, dcn_gaba_in_;
+    std::vector<int64_t> pc_cols_;              // PCs that fired this tick (MF-DCN LTD)
+    std::vector<double> mf_trace_, pc_trace_;   // MF-DCN LTD kernel sums
 };

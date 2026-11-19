@@ -6,7 +6,9 @@ This branch drives a simulated Baxter arm (right arm locked; the left arm's 7 jo
 circular end-effector trajectory. A spiking cerebellar model generates the arm's joint torques.
 The cerebellum is a recreation of the
 model in *On Robot Compliance: A Cerebellar Control Approach* (Abadía, Naveros, Garrido, Ros,
-Luque), see `reading/`.
+Luque), see `reading/`, with spike-timing-dependent plasticity added at the MF–DCN and PC–DCN
+synapses as in *Distributed Cerebellar Motor Learning: A Spike-Timing-Dependent Plasticity Model*
+(Luque et al. 2016, `reading/luque_2016.pdf`).
 
 ## Installation Instructions
 
@@ -42,9 +44,9 @@ python runExperiment.py --experiment trial_100 --save --hide_output
 python runExperiment.py --experiment trial_100 --view
 ```
 
-- `--save`: save results after running (arm trajectories to `results/arm_paths/`, graphs to `results/graphs/`)
+- `--save`: save results after running (arm trajectories to `results/arm_paths/`, graphs to `results/graphs/`, final PF-PC, MF-DCN and PC-DCN weights to the experiment's `finalWts` `.npz`, readable with `experiment_assets.load_weights`)
 - `--hide_output`: don't show plots or the 3D viewer; just print when the simulation is done
-- `--view`: does not re-run the experiment, only shows the saved graphs and then plays the saved trajectories. If no saved results exist, it runs the experiment with `--save` first
+- `--view`: does not re-run the experiment, only shows the saved graphs (arm, error, PF-PC weights, DCN raster, DCN weights) and then plays the saved trajectories. If no saved results exist, it runs the experiment with `--save` first
 - `--no_grav`: turn gravity off in the arm model
 - `--makeMovie`: accepted, but not used by `model_v02.py` on this branch yet
 
@@ -52,8 +54,10 @@ Each run simulates two things:
 1. The arm following the trajectory with the cerebellum + a PD velocity term, repeated `nTrials` times without resetting the arm between trials.
 1. A control run with no brain, for comparison.
 
-It then plots the joint and end-effector paths, the final PF-PC weight matrix, and the mean absolute
-joint error per trial (red dashed line = the no-brain error).
+It then plots the joint and end-effector paths, the final PF-PC weight matrix, the mean absolute
+joint error per trial (red dashed line = the no-brain error), a DCN spike raster, and the MF-DCN and
+PC-DCN weights vs trial for each joint's agonist and antagonist DCNs (`<graphs>_dcn_wts.png`; line =
+group mean, band = min to max, dashed = initial value).
 
 ### Watching the arm
 
@@ -103,6 +107,25 @@ Both take the same constructor arguments, `cerebellum(qMins, qdMins, qMaxs, qdMa
 `qdMins`/`qdMaxs` set the desired-velocity MF range; the optional `qdCurMins`/`qdCurMaxs` set the
 measured-velocity range and default to the desired-velocity range.
 The brain controls the first 6 joints; joint `w2` is left uncontrolled.
+
+### Synaptic plasticity
+
+Three sites learn. Each can be turned off with `brain.setActiveSites(pf_pc, mf_dcn, pc_dcn)`, which
+`model_v02.py` calls from the experiment's `plastic` field.
+
+| Site | Rule | Weights |
+|---|---|---|
+| PF–PC | LTP: fixed `ALPHA` per PF spike. LTD: per CF spike, kernel over PF spikes ~100 ms earlier | `brain.pf_pc_wts` |
+| MF–DCN | Luque 2016 Eqs. 5–6. LTP: fixed `MF_DCN_ALPHA` per MF spike. LTD: per PC spike reaching a DCN, symmetric kernel `exp(-\|βx\|)cos²x` over MF spikes before and after it. PCs above `MF_DCN_PC_RATE` weaken the MF drive to their DCN, PCs below strengthen it | `brain.mf_dcn_wts` (240 MFs × 600 DCN, all-to-all) |
+| PC–DCN | Luque 2016 Eq. 8, symmetric i-STDP. Each PC spike depresses by `PC_DCN_LTD_MAX`, each nearby PC/DCN spike pair potentiates by `LTP_MAX·k(Δt)`, pulling each DCN toward `PC_DCN_DCN_RATE` | `brain.pc_dcn_wts` (one per PC→DCN pair) |
+
+The MF–DCN input uses the same one-hot MF code that drives the GCs (one MF per subgroup per joint
+fires every tick). The weights start where the MF–DCN and PC–DCN drives were fixed before, so with
+only PF–PC plastic the model behaves as it did before. The paper gives no values for the DCN rules.
+The values here are set so the rules balance near the untrained model's PC (~46 Hz) and DCN
+(~153 Hz) rates. The weight caps (1 nS per MF–DCN synapse, 30 nS per PC–DCN synapse) are the per-synapse peak
+conductances from the paper's Table A1. The constants are at the top of `cerebellum` in `garrido_brain_v01.py`
+and `include/cerebellum.hpp`, so a change has to be made in both.
 
 ### Key simulation settings
 
